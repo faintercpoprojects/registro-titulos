@@ -144,3 +144,4 @@ create policy "anexos storage: apagar" on storage.objects for delete to authenti
 -- ---------- depois de criar a sua conta ----------
 -- Troque o e-mail abaixo pelo seu e rode só esta linha para virar administrador:
 -- update public.perfis set papel = 'admin' where email = 'seu-email@exemplo.com';
+
