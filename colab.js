@@ -17,6 +17,9 @@
   };
 
   const configurado = Boolean(window.SUPABASE_URL && window.SUPABASE_KEY && window.supabase);
+  // Links de convite e de nova senha chegam com "#access_token=...&type=invite|recovery".
+  // A biblioteca do Supabase apaga isso do endereço ao iniciar, então guardamos antes de criar o cliente.
+  const tipoLink = /[#&]type=(invite|recovery|signup|magiclink)/.exec(location.hash)?.[1] || null;
   const sb = configurado ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
   let usuario = null; // { id, email, nome, papel }
   let contagens = {}; // pais -> nº de registros
@@ -49,13 +52,16 @@
 
   async function iniciar() {
     if (!sb) return;
-    // Links de convite e de troca de senha chegam com os dados no endereço (#access_token=...&type=invite).
-    const veioDeLink = /type=(invite|recovery|signup)/.exec(location.hash)?.[1];
+    const erroLink = /error_description=([^&]+)/.exec(location.hash)?.[1];
     const { data: s } = await sb.auth.getSession();
     await carregarUsuario(s.session);
     await carregarContagens();
     if (/access_token|error_description/.test(location.hash)) history.replaceState(null, "", location.pathname + "#/");
-    if (veioDeLink && usuario) definirSenha(veioDeLink === "recovery" ? "Crie uma nova senha" : "Bem-vindo! Crie sua senha");
+    if (erroLink) {
+      alert("Esse link não vale mais (expirou ou já foi usado). Peça um link novo ao administrador.");
+    } else if (tipoLink && usuario) {
+      definirSenha(tipoLink === "recovery" ? "Crie uma nova senha" : "Bem-vindo! Crie sua senha", true);
+    }
     sb.auth.onAuthStateChange(async (evento, session) => {
       if (!["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED"].includes(evento)) return;
       await carregarUsuario(session);
@@ -94,13 +100,15 @@
   }
 
   // ---------- janelas (login, senha, edição) ----------
-  function janela(html, aoAbrir) {
+  function janela(html, aoAbrir, fixa = false) {
     const fundo = document.createElement("div");
     fundo.className = "modal-fundo";
     fundo.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
     const fechar = () => fundo.remove();
-    fundo.addEventListener("mousedown", (e) => e.target === fundo && fechar());
-    fundo.addEventListener("keydown", (e) => e.key === "Escape" && fechar());
+    if (!fixa) {
+      fundo.addEventListener("mousedown", (e) => e.target === fundo && fechar());
+      fundo.addEventListener("keydown", (e) => e.key === "Escape" && fechar());
+    }
     fundo.querySelectorAll("[data-fechar]").forEach((b) => (b.onclick = fechar));
     document.body.appendChild(fundo);
     fundo.querySelector("input, textarea, select, button")?.focus();
@@ -142,14 +150,16 @@
     );
   }
 
-  function definirSenha(titulo) {
+  // obrigatoria: veio de convite/link de nova senha; a janela só fecha depois de salvar.
+  function definirSenha(titulo, obrigatoria = false) {
     janela(
       `<h2>${esc(titulo)}</h2>
+       ${obrigatoria ? `<p class="muted">Crie a senha que você vai usar para entrar no site (mínimo de 8 caracteres).</p>` : ""}
        <form>
          <label>Nova senha<input type="password" name="senha" minlength="8" required autocomplete="new-password"></label>
          <label>Repita a senha<input type="password" name="senha2" minlength="8" required autocomplete="new-password"></label>
          <p class="erro" hidden></p>
-         <div class="acoes-form"><button type="button" class="btn-sec" data-fechar>Cancelar</button><button class="btn">Salvar senha</button></div>
+         <div class="acoes-form">${obrigatoria ? "" : `<button type="button" class="btn-sec" data-fechar>Cancelar</button>`}<button class="btn">Salvar senha</button></div>
        </form>`,
       (m, fechar) => {
         const f = m.querySelector("form");
@@ -159,10 +169,12 @@
           ocupado(f, true);
           const { error } = await sb.auth.updateUser({ password: f.senha.value });
           ocupado(f, false);
-          if (error) return mostrarErro(m.querySelector(".erro"), error.message);
+          if (error) return mostrarErro(m.querySelector(".erro"), /should be different/i.test(error.message) ? "A senha nova precisa ser diferente da anterior." : error.message);
           fechar();
+          if (obrigatoria) alert("Senha criada! A partir de agora entre com o seu e-mail e essa senha.");
         };
-      }
+      },
+      obrigatoria
     );
   }
 
