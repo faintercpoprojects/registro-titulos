@@ -40,7 +40,12 @@ O conteúdo fixo (situação, especialidades, órgão, requisitos e perguntas) f
 A data do rodapé é a linha `ATUALIZADO_EM`.
 O que o Acadêmico adiciona pelo site fica no Supabase e não precisa mexer em arquivo nenhum.
 
-## Publicar (grátis)
+## Endereço do site
+**https://faintercpoprojects.github.io/registro-titulos/** (GitHub Pages, repositório faintercpoprojects/registro-titulos).
+Para atualizar o site publicado, envie as mudanças para o repositório (`git push`); o GitHub atualiza o site em cerca de 1 minuto.
+Convites e permissões: entre como administrador → ícone no canto superior direito → **Equipe e permissões**.
+
+## Outras formas de publicar (grátis)
 - **Netlify Drop:** acesse app.netlify.com/drop e arraste esta pasta. Ele gera um link público na hora.
 - **GitHub Pages:** suba a pasta em um repositório e ative o Pages.
 - **Dentro do Google Sites:** depois de publicado, use Inserir → Incorporar → URL com o link do site.
