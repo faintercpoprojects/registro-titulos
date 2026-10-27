@@ -203,7 +203,7 @@
     el.innerHTML = `<p class="muted">Carregando…</p>`;
     const { data: regs, error } = await sb
       .from("registros")
-      .select("id, categoria, especialidade, titulo, conteudo, autor_nome, criado_em, atualizado_em, anexos (id, nome, caminho, tamanho, tipo, criado_em)")
+      .select("id, categoria, especialidade, data_documento, titulo, conteudo, autor_nome, criado_em, atualizado_em, anexos (id, nome, caminho, tamanho, tipo, criado_em)")
       .eq("pais", pais.id)
       .order("criado_em", { ascending: false });
     if (error) {
@@ -245,6 +245,7 @@
       <article class="reg">
         <header>
           <span class="cat cat-${r.categoria}">${CATEGORIAS[r.categoria] || r.categoria}</span>
+          ${r.data_documento ? `<span class="cat cat-data" title="Data de registro do título">Registrado em ${dataCurta(r.data_documento)}</span>` : ""}
           ${r.especialidade ? `<span class="cat cat-esp" title="${esc(nomeEsp(r.especialidade))}">${esc(nomeEsp(r.especialidade))}</span>` : ""}
           <h3>${esc(r.titulo)}</h3>
           ${
@@ -291,6 +292,9 @@
     const t = String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
     return PADROES_ESP.find(([, re]) => re.test(t))?.[0] || null;
   }
+  // "2026-03-15" (coluna date) -> "15/03/2026", sem erro de fuso.
+  const dataCurta = (iso) => (iso ? iso.split("-").reverse().join("/") : "");
+  const dataLocal = (iso) => (iso ? new Date(iso + "T12:00:00") : null);
   const nomeEsp = (sigla) => (window.ESPECIALIDADES || []).find((e) => e.sigla === sigla)?.nome || sigla;
 
   // Roda tarefas com no máximo "limite" ao mesmo tempo (envios em paralelo sem travar a conexão).
@@ -351,6 +355,10 @@
            </select>
            <small class="dica-campo" id="dicaEsp"></small>
          </label>
+         <label>Data de registro do título
+           <input type="date" name="data_documento" value="${esc(reg?.data_documento || "")}" max="${new Date().toISOString().slice(0, 10)}">
+           <small class="dica-campo" id="dicaData">Data em que o título do aluno foi registrado no país. É a data usada no Painel.</small>
+         </label>
          <label class="campo-titulo">Título<input name="titulo" required maxlength="200" value="${esc(reg?.titulo || "")}" placeholder="Ex.: Título convalidado de Ortodontia - Fulano"></label>
          <label>Informações<textarea name="conteudo" rows="6" placeholder="Detalhes, prazos, contatos, links…">${esc(reg?.conteudo || "")}</textarea></label>
          <div class="anexar">
@@ -377,12 +385,18 @@
           (dicaEsp.textContent = f.lote?.checked
             ? "No envio em lote, a especialidade é reconhecida pelo nome de cada arquivo (Orto, Prot, Endo...). A escolhida aqui vale para os que não forem reconhecidos."
             : "");
+        const dicaData = m.querySelector("#dicaData");
+        const datas = new Map(); // arquivo -> data do documento (envio em lote)
         f.lote?.addEventListener("change", () => {
           m.querySelector(".campo-titulo").hidden = f.lote.checked;
           f.titulo.required = !f.lote.checked;
+          dicaData.textContent = f.lote.checked
+            ? "Preencha a data de registro ao lado de cada arquivo. A data daqui vale para os que ficarem em branco."
+            : "Data em que o título do aluno foi registrado no país. É a data usada no Painel.";
           atualizarDicaEsp();
           desenharLista();
         });
+        f.data_documento.addEventListener("change", () => f.lote?.checked && desenharLista());
         // Sem especialidade escolhida: tenta reconhecer pelo título digitado.
         f.titulo.addEventListener("input", () => {
           if (!f.especialidade.dataset.manual) f.especialidade.value = detectarEsp(f.titulo.value) || "";
@@ -396,9 +410,14 @@
               .map((a, i) => {
                 const esp = f.lote?.checked ? detectarEsp(a.name) || f.especialidade.value : "";
                 const rotulo = f.lote?.checked ? ` · ${esp ? esc(nomeEsp(esp)) : "sem especialidade"}` : "";
-                return `<li class="novo"><span>${esc(a.name)}</span><small>${tamanho(a.size)}${rotulo}</small><button type="button" class="link perigo" data-tirar-novo="${i}">remover</button></li>`;
+                if (f.lote?.checked && !datas.has(a)) datas.set(a, "");
+                const campoData = f.lote?.checked
+                  ? `<input type="date" class="data-arquivo" data-data-novo="${i}" value="${datas.get(a) || ""}" placeholder="${f.data_documento.value}" title="Data de registro do título" max="${new Date().toISOString().slice(0, 10)}">`
+                  : "";
+                return `<li class="novo"><span>${esc(a.name)}</span><small>${tamanho(a.size)}${rotulo}</small>${campoData}<button type="button" class="link perigo" data-tirar-novo="${i}">remover</button></li>`;
               })
               .join("");
+          lista.querySelectorAll("[data-data-novo]").forEach((c) => (c.onchange = () => datas.set(novos[+c.dataset.dataNovo], c.value)));
           lista.querySelectorAll("[data-tirar-antigo]").forEach((b) => (b.onclick = () => (remover.add(b.dataset.tirarAntigo), desenharLista())));
           lista.querySelectorAll("[data-tirar-novo]").forEach((b) => (b.onclick = () => (novos.splice(+b.dataset.tirarNovo, 1), desenharLista())));
         };
@@ -441,6 +460,14 @@
           erro.hidden = true;
           const lote = Boolean(f.lote?.checked);
           if (lote && !novos.length) return mostrarErro(erro, "Escolha os arquivos: cada um vira um registro.");
+          // Título convalidado precisa da data de registro (é ela que conta no Painel).
+          const ehTitulo = f.categoria.value === "titulo_convalidado";
+          const dataDe = (file) => datas.get(file) || f.data_documento.value || "";
+          if (ehTitulo && !lote && !f.data_documento.value) return mostrarErro(erro, "Informe a data de registro do título.");
+          if (ehTitulo && lote) {
+            const sem = novos.filter((x) => !dataDe(x));
+            if (sem.length) return mostrarErro(erro, `Falta a data de registro em ${sem.length} arquivo(s): preencha ao lado de cada um ou no campo "Data de registro do título".`);
+          }
           ocupado(f, true);
           botao.textContent = "Enviando…";
           try {
@@ -449,13 +476,15 @@
               titulo: f.titulo.value.trim(),
               conteudo: f.conteudo.value.trim(),
               especialidade: f.especialidade.value || detectarEsp(f.titulo.value) || null,
+              data_documento: f.data_documento.value || null,
             };
             if (lote) {
               // Um registro por arquivo, vários ao mesmo tempo.
               await emParalelo(novos, 4, async (file) => {
                 const titulo = file.name.replace(/\.[^.]+$/, "").slice(0, 200) || file.name;
                 const especialidade = detectarEsp(file.name) || f.especialidade.value || null;
-                const { data: novo, error } = await sb.from("registros").insert({ ...campos, titulo, especialidade, pais: pais.id }).select("id").single();
+                const data_documento = dataDe(file) || null;
+                const { data: novo, error } = await sb.from("registros").insert({ ...campos, titulo, especialidade, data_documento, pais: pais.id }).select("id").single();
                 if (error) throw error;
                 await anexar(novo.id, file);
               });
@@ -721,9 +750,9 @@
     el.innerHTML = `<p class="muted">Carregando…</p>`;
     const { data: regs, error } = await sb
       .from("registros")
-      .select("id, pais, especialidade, titulo, criado_em")
+      .select("id, pais, especialidade, titulo, data_documento, criado_em")
       .eq("categoria", "titulo_convalidado")
-      .order("criado_em", { ascending: false });
+      .order("data_documento", { ascending: false, nullsFirst: false });
     if (error) return (el.innerHTML = `<p class="erro">Não consegui carregar: ${esc(error.message)}</p>`);
 
     const ESPS = window.ESPECIALIDADES || [];
@@ -735,7 +764,7 @@
     // Período, país e especialidade escolhidos.
     const alunos = regs.filter(
       (r) =>
-        (!desde || new Date(r.criado_em) >= desde) &&
+        (!desde || (r.data_documento && dataLocal(r.data_documento) >= desde)) &&
         (!filtroPainel.pais || r.pais === filtroPainel.pais) &&
         (!filtroPainel.esp || r.especialidade === filtroPainel.esp)
     );
@@ -743,14 +772,18 @@
     const paisesCom = new Set(alunos.map((r) => r.pais));
     const espsCom = new Set(alunos.map((r) => r.especialidade).filter(Boolean));
     const semEsp = alunos.filter((r) => !r.especialidade).length;
+    // Sem data de registro: ficam fora do gráfico por mês e dos filtros de período (conta só país/especialidade).
+    const semData = regs.filter((r) => !r.data_documento && (!filtroPainel.pais || r.pais === filtroPainel.pais) && (!filtroPainel.esp || r.especialidade === filtroPainel.esp)).length;
 
-    // Meses do gráfico: do período escolhido (no "Tudo", do primeiro envio até hoje, no mínimo 6).
-    const primeiro = regs.length ? inicioMes(new Date(regs[regs.length - 1].criado_em)) : inicioMes(hoje);
+    // Meses do gráfico pela data de registro do título (no "Tudo", da mais antiga até hoje, no mínimo 6 meses).
+    const comData = regs.filter((r) => r.data_documento).map((r) => dataLocal(r.data_documento));
+    const primeiro = comData.length ? inicioMes(new Date(Math.min(...comData))) : inicioMes(hoje);
     const inicio = desde || new Date(Math.min(primeiro, new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1)));
     const meses = [];
     for (let d = inicioMes(inicio); d <= hoje; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) meses.push({ t: d.getTime(), rotulo: rotuloMes(d), valor: 0 });
     for (const r of alunos) {
-      const alvo = meses.find((m) => m.t === inicioMes(new Date(r.criado_em)).getTime());
+      if (!r.data_documento) continue;
+      const alvo = meses.find((m) => m.t === inicioMes(dataLocal(r.data_documento)).getTime());
       if (alvo) alvo.valor++;
     }
     const novosMes = meses.length ? meses[meses.length - 1].valor : 0;
@@ -794,7 +827,7 @@
         <div class="kpi"><small>Especialidades convalidadas</small><b>${espsCom.size} <em>de ${ESPS.length}</em></b><span>${
       espsCom.size ? [...espsCom].map(nomeEsp).join(", ") : "nenhuma ainda"
     }</span></div>
-        <div class="kpi"><small>Novos neste mês</small><b>${novosMes}</b><span>${rotuloMes(hoje)}</span></div>
+        <div class="kpi"><small>Títulos registrados neste mês</small><b>${novosMes}</b><span>${rotuloMes(hoje)}</span></div>
       </div>
 
       <div class="grade-painel">
@@ -826,16 +859,16 @@
           }
         </section>
 
-        <section class="cartao largo"><h3>Alunos convalidados por mês</h3><p class="sub">Data em que o título foi registrado no site</p>${colunas(meses)}</section>
+        <section class="cartao largo"><h3>Alunos convalidados por mês</h3><p class="sub">Pela data de registro do título informada pelo Acadêmico</p>${colunas(meses)}${semData ? `<p class="aviso-data">${semData} título${semData === 1 ? "" : "s"} sem data de registro ${semData === 1 ? "não entra" : "não entram"} no gráfico${filtroPainel.meses ? " nem no filtro de período" : ""}. Edite no país e preencha a data.</p>` : ""}</section>
 
         <section class="cartao largo"><h3>Títulos registrados</h3><p class="sub">${alunos.length} no filtro${alunos.length > 15 ? " · mostrando os 15 mais recentes (a planilha traz todos)" : ""}</p>
           ${
             alunos.length
-              ? `<div class="tabela-wrap"><table class="tabela-simples"><thead><tr><th>Data</th><th>País</th><th>Especialidade</th><th>Título / aluno</th></tr></thead><tbody>${alunos
+              ? `<div class="tabela-wrap"><table class="tabela-simples"><thead><tr><th>Registro do título</th><th>País</th><th>Especialidade</th><th>Título / aluno</th></tr></thead><tbody>${alunos
                   .slice(0, 15)
                   .map(
                     (r) =>
-                      `<tr><td>${new Date(r.criado_em).toLocaleDateString("pt-BR")}</td><td>${esc(nomePais(r.pais))}</td><td>${esc(
+                      `<tr><td>${r.data_documento ? dataCurta(r.data_documento) : "<span class=\"sem-data\">sem data</span>"}</td><td>${esc(nomePais(r.pais))}</td><td>${esc(
                         r.especialidade ? nomeEsp(r.especialidade) : "—"
                       )}</td><td>${esc(r.titulo)}</td></tr>`
                   )
@@ -869,8 +902,8 @@
   // Planilha (CSV para Excel) com todos os alunos do filtro atual.
   function baixarCsv(nomePais) {
     const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const linhas = [["Data", "País", "Especialidade", "Título / aluno"]].concat(
-      ultimosAlunos.map((r) => [new Date(r.criado_em).toLocaleDateString("pt-BR"), nomePais(r.pais), r.especialidade ? nomeEsp(r.especialidade) : "", r.titulo])
+    const linhas = [["Data de registro do título", "País", "Especialidade", "Título / aluno"]].concat(
+      ultimosAlunos.map((r) => [dataCurta(r.data_documento), nomePais(r.pais), r.especialidade ? nomeEsp(r.especialidade) : "", r.titulo])
     );
     const csv = "﻿" + linhas.map((l) => l.map(cel).join(";")).join("\r\n");
     const a = document.createElement("a");

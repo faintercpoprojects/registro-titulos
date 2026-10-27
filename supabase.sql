@@ -169,3 +169,8 @@ alter table public.registros drop constraint if exists registros_categoria_check
 alter table public.registros add constraint registros_categoria_check
   check (categoria in ('titulo_convalidado', 'informacao', 'documento', 'resposta_orgao', 'andamento_aluno'));
 update public.registros set categoria = 'titulo_convalidado' where titulo ~* 'convalidad';
+
+-- ---------- data do documento (27/10/2026) ----------
+-- Data que está no documento do aluno (convalidação). O Painel conta os alunos por mês por esta data.
+alter table public.registros add column if not exists data_documento date;
+create index if not exists registros_data_documento on public.registros (data_documento);

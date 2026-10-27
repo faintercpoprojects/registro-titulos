@@ -453,3 +453,7 @@ table.matriz tfoot td { font-weight: 600; background: var(--bg); border-top: 2px
   .grade-painel { grid-template-columns: 1fr 1fr; }
   .tabela-wrap { overflow: visible; border: 0; }
 }
+.cat-data { background: var(--bg); color: var(--muted); }
+.lista-anexos input.data-arquivo { width: 150px; flex: none; padding: 6px 8px; font-size: 13px; border-radius: 8px; border: 1px solid var(--line); }
+.sem-data { color: var(--parcial); font-weight: 600; }
+.aviso-data { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--parcial-bg); color: var(--parcial); font-size: 13px; }
