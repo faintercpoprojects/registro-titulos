@@ -87,6 +87,15 @@ Deno.serve(async (req) => {
     return resposta(200, { ok: true, link: g.data.properties.action_link });
   }
 
+  if (corpo.acao === "definir_senha") {
+    // O administrador digita a senha e passa para a pessoa (sem link nem e-mail).
+    const senha = String(corpo.senha || "");
+    if (senha.length < 8) return resposta(400, { erro: "A senha precisa ter pelo menos 8 caracteres." });
+    const { error } = await admin.auth.admin.updateUserById(String(corpo.id || ""), { password: senha, email_confirm: true });
+    if (error) return resposta(400, { erro: error.message });
+    return resposta(200, { ok: true });
+  }
+
   if (corpo.acao === "remover") {
     const id = String(corpo.id || "");
     if (id === quem.user.id) return resposta(400, { erro: "Você não pode remover o seu próprio acesso." });

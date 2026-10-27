@@ -401,6 +401,32 @@
     }
   }
 
+  // Administrador define a senha de alguém da equipe (sem link nem e-mail).
+  function definirSenhaDeOutro(id, email) {
+    janela(
+      `<h2>Definir senha</h2>
+       <p>Nova senha de <b>${esc(email)}</b>. Depois é só passar o e-mail e essa senha para a pessoa entrar.</p>
+       <form>
+         <label>Senha<input type="text" name="senha" minlength="8" required autocomplete="off" spellcheck="false"></label>
+         <p class="muted">Mínimo de 8 caracteres. A pessoa pode trocar depois em "Trocar senha", no menu do ícone.</p>
+         <p class="erro" hidden></p>
+         <div class="acoes-form"><button type="button" class="btn-sec" data-fechar>Cancelar</button><button class="btn">Salvar senha</button></div>
+       </form>`,
+      (m, fechar) => {
+        const f = m.querySelector("form");
+        f.onsubmit = async (e) => {
+          e.preventDefault();
+          ocupado(f, true);
+          const r = await chamarEquipe({ acao: "definir_senha", id, senha: f.senha.value });
+          ocupado(f, false);
+          if (r.erro) return mostrarErro(m.querySelector(".erro"), r.erro);
+          fechar();
+          alert(`Senha salva! ${email} já pode entrar com essa senha.`);
+        };
+      }
+    );
+  }
+
   function mostrarLink(email, link, depois, titulo = "Link de acesso", motivo = "O limite de e-mails grátis por hora foi atingido, então o convite não foi por e-mail.") {
     janela(
       `<h2>${esc(titulo)}</h2>
@@ -453,7 +479,7 @@
           .map(
             (p) => `<tr><td>${esc(p.nome)}</td><td>${esc(p.email)}</td><td>
               <select data-perfil="${p.id}" ${p.id === usuario.id ? "disabled title='Você não pode mudar a sua própria permissão'" : ""}>${opcoes(p.papel)}</select></td>
-              <td class="acoes-pessoa"><button class="link" data-senha="${p.id}" data-email="${esc(p.email)}">Link de nova senha</button>${
+              <td class="acoes-pessoa"><button class="link" data-definir="${p.id}" data-email="${esc(p.email)}">Definir senha</button><button class="link" data-senha="${p.id}" data-email="${esc(p.email)}">Link de nova senha</button>${
                 p.id === usuario.id ? "" : `<button class="link perigo" data-remover="${p.id}" data-nome="${esc(p.nome)}">Remover acesso</button>`
               }</td></tr>`
           )
@@ -478,6 +504,7 @@
       mostrarErro(erro, `Convite enviado para ${f.email.value.trim()}. A pessoa recebe um e-mail para criar a senha.`, true);
       setTimeout(() => desenharEquipe(el), 1800);
     };
+    el.querySelectorAll("[data-definir]").forEach((b) => b.addEventListener("click", () => definirSenhaDeOutro(b.dataset.definir, b.dataset.email)));
     el.querySelectorAll("[data-senha]").forEach((b) =>
       b.addEventListener("click", async () => {
         b.disabled = true;
