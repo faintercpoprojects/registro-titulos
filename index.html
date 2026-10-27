@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro de Títulos · UniCPO</title>
+  <meta name="description" content="Convalidação e registro dos títulos de especialização da UniCPO em outros países.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-mark">U</span>
+      <span><b>Registro de Títulos</b><small>UniCPO Acadêmico</small></span>
+    </a>
+    <nav>
+      <a href="#/" data-nav="inicio">Países</a>
+      <a href="#/especialidades" data-nav="especialidades">Por especialidade</a>
+      <a href="#/perguntar" data-nav="perguntar" class="cta">Enviar pergunta</a>
+      <div id="conta"></div>
+    </nav>
+  </header>
+
+  <main id="app"></main>
+
+  <footer class="footer">
+    <p>Informações levantadas pela equipe UniCPO junto aos órgãos de cada país. Atualizado em <span id="atualizado"></span>.</p>
+    <p>As regras podem mudar. Confirme com o órgão responsável antes de iniciar o processo.</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="data.js"></script>
+  <script src="colab.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

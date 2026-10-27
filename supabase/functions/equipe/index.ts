@@ -1,0 +1,72 @@
+// Função "equipe": só o administrador convida e remove pessoas do site.
+// Roda no Supabase (Edge Functions). Usa a chave secreta do próprio projeto, que nunca vai para o navegador.
+import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const PAPEIS = ["leitor", "academico", "admin"];
+const resposta = (status: number, corpo: unknown) =>
+  new Response(JSON.stringify(corpo), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method !== "POST") return resposta(405, { erro: "Método não permitido" });
+
+  // Projetos novos também expõem as chaves secretas novas em SUPABASE_SECRET_KEYS.
+  let chave = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!chave) {
+    try {
+      chave = Object.values(JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}"))[0] as string;
+    } catch {
+      chave = "";
+    }
+  }
+  if (!chave) return resposta(500, { erro: "Chave secreta do projeto não encontrada na função." });
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, chave, {
+    auth: { persistSession: false },
+  });
+
+  // Quem está pedindo? Precisa estar logado e ser administrador.
+  const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const { data: quem } = await admin.auth.getUser(token);
+  if (!quem?.user) return resposta(401, { erro: "Entre no site para continuar." });
+  const { data: perfil } = await admin.from("perfis").select("papel").eq("id", quem.user.id).maybeSingle();
+  if (perfil?.papel !== "admin") return resposta(403, { erro: "Só o administrador pode fazer isso." });
+
+  let corpo: Record<string, string>;
+  try {
+    corpo = await req.json();
+  } catch {
+    return resposta(400, { erro: "Pedido inválido." });
+  }
+
+  if (corpo.acao === "convidar") {
+    const email = String(corpo.email || "").trim().toLowerCase();
+    const nome = String(corpo.nome || "").trim().slice(0, 120);
+    const papel = PAPEIS.includes(corpo.papel) ? corpo.papel : "leitor";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return resposta(400, { erro: "E-mail inválido." });
+    // O link do convite abre no mesmo endereço de onde o administrador convidou.
+    const site = String(corpo.site || "").startsWith("http") ? corpo.site : undefined;
+
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { nome }, redirectTo: site });
+    if (error) {
+      const jaExiste = /already|registered|exists/i.test(error.message);
+      return resposta(400, { erro: jaExiste ? "Esse e-mail já tem acesso ao site." : error.message });
+    }
+    await admin.from("perfis").upsert({ id: data.user.id, email, nome: nome || email.split("@")[0], papel });
+    return resposta(200, { ok: true });
+  }
+
+  if (corpo.acao === "remover") {
+    const id = String(corpo.id || "");
+    if (id === quem.user.id) return resposta(400, { erro: "Você não pode remover o seu próprio acesso." });
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) return resposta(400, { erro: error.message });
+    return resposta(200, { ok: true });
+  }
+
+  return resposta(400, { erro: "Ação desconhecida." });
+});
