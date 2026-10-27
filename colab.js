@@ -389,6 +389,30 @@
     }
   }
 
+  function mostrarLink(email, link, depois) {
+    janela(
+      `<h2>Link de acesso</h2>
+       <p>O limite de e-mails grátis por hora foi atingido, então o convite não foi por e-mail.
+       Copie o link abaixo e envie para <b>${esc(email)}</b> (WhatsApp, por exemplo). Ao abrir, a pessoa cria a própria senha.</p>
+       <textarea readonly rows="4" id="linkConvite">${esc(link)}</textarea>
+       <p class="muted">O link vale por pouco tempo (normalmente 1 hora) e só pode ser usado uma vez. Se expirar, convide de novo.</p>
+       <div class="acoes-form"><button class="btn-sec" data-fechar>Fechar</button><button class="btn" id="copiarLink">Copiar link</button></div>`,
+      (m, fechar) => {
+        const t = m.querySelector("#linkConvite");
+        m.querySelector("#copiarLink").onclick = async () => {
+          t.select();
+          try {
+            await navigator.clipboard.writeText(link);
+          } catch {
+            document.execCommand("copy");
+          }
+          m.querySelector("#copiarLink").textContent = "Copiado!";
+        };
+        m.querySelectorAll("[data-fechar]").forEach((b) => b.addEventListener("click", depois));
+      }
+    );
+  }
+
   // ---------- equipe (só admin) ----------
   async function desenharEquipe(el) {
     if (usuario?.papel !== "admin") {
@@ -432,6 +456,11 @@
       const r = await chamarEquipe({ acao: "convidar", nome: f.nome.value.trim(), email: f.email.value.trim(), papel: f.papel.value, site: location.origin + location.pathname });
       ocupado(f, false);
       if (r.erro) return mostrarErro(erro, r.erro);
+      if (r.link) {
+        // Sem e-mail (limite do plano grátis): o administrador copia o link e manda por WhatsApp.
+        mostrarLink(f.email.value.trim(), r.link, () => desenharEquipe(el));
+        return;
+      }
       mostrarErro(erro, `Convite enviado para ${f.email.value.trim()}. A pessoa recebe um e-mail para criar a senha.`, true);
       setTimeout(() => desenharEquipe(el), 1800);
     };

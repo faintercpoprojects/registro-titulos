@@ -51,13 +51,30 @@ Deno.serve(async (req) => {
     // O link do convite abre no mesmo endereço de onde o administrador convidou.
     const site = String(corpo.site || "").startsWith("http") ? corpo.site : undefined;
 
-    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { nome }, redirectTo: site });
-    if (error) {
-      const jaExiste = /already|registered|exists/i.test(error.message);
-      return resposta(400, { erro: jaExiste ? "Esse e-mail já tem acesso ao site." : error.message });
+    const opcoes = { data: { nome }, redirectTo: site };
+    let usuario = null;
+    let link: string | null = null;
+    const { data, error } = await admin.auth.admin.inviteUserByEmail(email, opcoes);
+    if (!error) {
+      usuario = data.user;
+    } else if (/rate limit/i.test(error.message)) {
+      // O e-mail grátis do Supabase só manda poucos e-mails por hora: gera o link para enviar por WhatsApp.
+      const g = await admin.auth.admin.generateLink({ type: "invite", email, options: opcoes });
+      if (g.error) return resposta(400, { erro: g.error.message });
+      usuario = g.data.user;
+      link = g.data.properties.action_link;
+    } else if (/already|registered|exists/i.test(error.message)) {
+      // Convidado antes mas nunca entrou: gera um link novo para criar a senha.
+      const g = await admin.auth.admin.generateLink({ type: "recovery", email, options: { redirectTo: site } });
+      if (g.error) return resposta(400, { erro: g.error.message });
+      if (g.data.user.last_sign_in_at) return resposta(400, { erro: "Esse e-mail já tem acesso ao site. Mude a permissão na lista abaixo." });
+      usuario = g.data.user;
+      link = g.data.properties.action_link;
+    } else {
+      return resposta(400, { erro: error.message });
     }
-    await admin.from("perfis").upsert({ id: data.user.id, email, nome: nome || email.split("@")[0], papel });
-    return resposta(200, { ok: true });
+    await admin.from("perfis").upsert({ id: usuario.id, email, nome: nome || email.split("@")[0], papel });
+    return resposta(200, { ok: true, link });
   }
 
   if (corpo.acao === "remover") {
