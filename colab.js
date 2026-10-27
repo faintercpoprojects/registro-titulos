@@ -273,6 +273,43 @@
     window.open(d.signedUrl, "_blank", "noopener");
   }
 
+  // Roda tarefas com no máximo "limite" ao mesmo tempo (envios em paralelo sem travar a conexão).
+  async function emParalelo(itens, limite, tarefa) {
+    let proximo = 0;
+    const trabalhador = async () => {
+      while (proximo < itens.length) await tarefa(itens[proximo++]);
+    };
+    await Promise.all(Array.from({ length: Math.min(limite, itens.length) }, trabalhador));
+  }
+
+  // Envia um arquivo direto para o Storage com progresso (a biblioteca não informa o progresso).
+  async function anexarArquivo(paisId, registroId, file, aoProgredir) {
+    const seguro = file.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.\-]+/g, "_").slice(-120);
+    const caminho = `${paisId}/${registroId}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${seguro}`;
+    const { data: s } = await sb.auth.getSession();
+    await new Promise((ok, falha) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${caminho}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${s.session?.access_token}`);
+      xhr.setRequestHeader("apikey", SUPABASE_KEY);
+      xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+      xhr.setRequestHeader("x-upsert", "false");
+      xhr.upload.onprogress = (ev) => ev.lengthComputable && aoProgredir(ev.loaded);
+      xhr.onload = () => {
+        if (xhr.status < 300) return ok();
+        let msg = xhr.statusText;
+        try {
+          msg = JSON.parse(xhr.responseText).message || msg;
+        } catch {}
+        falha(new Error(`Falha ao enviar "${file.name}": ${msg}`));
+      };
+      xhr.onerror = () => falha(new Error(`Falha de conexão ao enviar "${file.name}".`));
+      xhr.send(file);
+    });
+    const { error } = await sb.from("anexos").insert({ registro_id: registroId, pais: paisId, nome: file.name, caminho, tamanho: file.size, tipo: file.type });
+    if (error) throw error;
+  }
+
   function editarRegistro(pais, reg, depois) {
     const novos = [];
     const remover = new Set();
@@ -282,7 +319,12 @@
          <label>Tipo
            <select name="categoria">${Object.entries(CATEGORIAS).map(([k, v]) => `<option value="${k}" ${reg?.categoria === k ? "selected" : ""}>${v}</option>`).join("")}</select>
          </label>
-         <label>Título<input name="titulo" required maxlength="200" value="${esc(reg?.titulo || "")}" placeholder="Ex.: Resposta da SUNEDU sobre AOF"></label>
+         ${
+           reg
+             ? ""
+             : `<label class="check"><input type="checkbox" name="lote"> Vários documentos de uma vez: cada arquivo vira um registro, com o nome do arquivo como título</label>`
+         }
+         <label class="campo-titulo">Título<input name="titulo" required maxlength="200" value="${esc(reg?.titulo || "")}" placeholder="Ex.: Resposta da SUNEDU sobre AOF"></label>
          <label>Informações<textarea name="conteudo" rows="6" placeholder="Detalhes, prazos, contatos, links…">${esc(reg?.conteudo || "")}</textarea></label>
          <div class="anexar">
            <span>Anexos</span>
@@ -292,6 +334,7 @@
              Arraste arquivos aqui ou <u>clique para escolher</u><small>Até ${MAX_MB} MB por arquivo</small>
            </label>
          </div>
+         <div class="progresso" hidden><div class="barra"><span></span></div><small></small></div>
          <p class="erro" hidden></p>
          <div class="acoes-form"><button type="button" class="btn-sec" data-fechar>Cancelar</button><button class="btn">Salvar</button></div>
        </form>`,
@@ -299,6 +342,13 @@
         const f = m.querySelector("form");
         const lista = m.querySelector("#listaAnexos");
         const erro = m.querySelector(".erro");
+        const prog = m.querySelector(".progresso");
+        const botao = f.querySelector(".btn:not(.btn-sec)");
+        // Modo lote: o título vem do nome de cada arquivo, então o campo título some.
+        f.lote?.addEventListener("change", () => {
+          m.querySelector(".campo-titulo").hidden = f.lote.checked;
+          f.titulo.required = !f.lote.checked;
+        });
         const desenharLista = () => {
           const antigos = (reg?.anexos || []).filter((a) => !remover.has(a.id));
           lista.innerHTML =
@@ -321,44 +371,68 @@
         zona.addEventListener("drop", (e) => (e.preventDefault(), zona.classList.remove("sobre"), adicionar(e.dataTransfer.files)));
         desenharLista();
 
+        // Barra de progresso somando os bytes enviados de todos os arquivos.
+        const enviados = new Map();
+        const total = () => novos.reduce((s, x) => s + x.size, 0) || 1;
+        const atualizar = (texto) => {
+          const feito = [...enviados.values()].reduce((s, x) => s + x, 0);
+          prog.hidden = false;
+          prog.querySelector("span").style.width = Math.min(100, Math.round((feito / total()) * 100)) + "%";
+          prog.querySelector("small").textContent = texto;
+        };
+        let concluidos = 0;
+        const anexar = async (registroId, file) => {
+          await anexarArquivo(pais.id, registroId, file, (b) => {
+            enviados.set(file, b);
+            atualizar(`Enviando ${concluidos} de ${novos.length} arquivos…`);
+          });
+          enviados.set(file, file.size);
+          concluidos++;
+          atualizar(`Enviando ${concluidos} de ${novos.length} arquivos…`);
+        };
+
         f.onsubmit = async (e) => {
           e.preventDefault();
           erro.hidden = true;
+          const lote = Boolean(f.lote?.checked);
+          if (lote && !novos.length) return mostrarErro(erro, "Escolha os arquivos: cada um vira um registro.");
           ocupado(f, true);
+          botao.textContent = "Enviando…";
           try {
             const campos = { categoria: f.categoria.value, titulo: f.titulo.value.trim(), conteudo: f.conteudo.value.trim() };
-            let id = reg?.id;
-            if (reg) {
-              const { error } = await sb.from("registros").update(campos).eq("id", id);
-              if (error) throw error;
+            if (lote) {
+              // Um registro por arquivo, vários ao mesmo tempo.
+              await emParalelo(novos, 4, async (file) => {
+                const titulo = file.name.replace(/\.[^.]+$/, "").slice(0, 200) || file.name;
+                const { data: novo, error } = await sb.from("registros").insert({ ...campos, titulo, pais: pais.id }).select("id").single();
+                if (error) throw error;
+                await anexar(novo.id, file);
+              });
             } else {
-              const { data: novo, error } = await sb.from("registros").insert({ ...campos, pais: pais.id }).select("id").single();
-              if (error) throw error;
-              id = novo.id;
-              contagens[pais.id] = (contagens[pais.id] || 0) + 1;
-            }
-            const tirar = (reg?.anexos || []).filter((a) => remover.has(a.id));
-            if (tirar.length) {
-              await sb.storage.from(BUCKET).remove(tirar.map((a) => a.caminho));
-              const { error } = await sb.from("anexos").delete().in("id", tirar.map((a) => a.id));
-              if (error) throw error;
-            }
-            for (let i = 0; i < novos.length; i++) {
-              const file = novos[i];
-              f.querySelector(".btn:not(.btn-sec)").textContent = `Enviando ${i + 1} de ${novos.length}…`;
-              const seguro = file.name.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.\-]+/g, "_").slice(-120);
-              const caminho = `${pais.id}/${id}/${Date.now()}-${seguro}`;
-              const up = await sb.storage.from(BUCKET).upload(caminho, file, { contentType: file.type || "application/octet-stream" });
-              if (up.error) throw new Error(`Falha ao enviar "${file.name}": ${up.error.message}`);
-              const { error } = await sb.from("anexos").insert({ registro_id: id, pais: pais.id, nome: file.name, caminho, tamanho: file.size, tipo: file.type });
-              if (error) throw error;
+              let id = reg?.id;
+              if (reg) {
+                const { error } = await sb.from("registros").update(campos).eq("id", id);
+                if (error) throw error;
+              } else {
+                const { data: novo, error } = await sb.from("registros").insert({ ...campos, pais: pais.id }).select("id").single();
+                if (error) throw error;
+                id = novo.id;
+              }
+              const tirar = (reg?.anexos || []).filter((a) => remover.has(a.id));
+              if (tirar.length) {
+                await sb.storage.from(BUCKET).remove(tirar.map((a) => a.caminho));
+                const { error } = await sb.from("anexos").delete().in("id", tirar.map((a) => a.id));
+                if (error) throw error;
+              }
+              await emParalelo(novos, 4, (file) => anexar(id, file));
             }
             fechar();
             depois();
           } catch (err) {
             ocupado(f, false);
-            f.querySelector(".btn:not(.btn-sec)").textContent = "Salvar";
-            mostrarErro(erro, "Não consegui salvar: " + (err.message || err));
+            botao.textContent = "Salvar";
+            const parcial = lote && concluidos ? ` ${concluidos} de ${novos.length} já foram enviados; confira a lista antes de tentar de novo.` : "";
+            mostrarErro(erro, "Não consegui salvar: " + (err.message || err) + parcial);
           }
         };
       }
@@ -536,7 +610,147 @@
     );
   }
 
+  // ---------- painel (dashboard) ----------
+  const DIA = 86400000;
+  const PERIODOS = { 7: "7 dias", 30: "30 dias", 90: "90 dias", 0: "Tudo" };
+  let periodo = 30;
+
+  // Barras horizontais de uma série só (uma cor, rótulo e valor em texto).
+  function barras(itens, { link } = {}) {
+    if (!itens.length) return `<p class="muted">Nada no período.</p>`;
+    const max = Math.max(...itens.map((i) => i.valor)) || 1;
+    return `<ul class="barras">${itens
+      .map(
+        (i) => `<li data-dica="${esc(i.rotulo)}: ${i.valor}${i.extra ? " · " + esc(i.extra) : ""}">
+          <span class="rot">${link ? `<a href="${link(i)}">${esc(i.rotulo)}</a>` : esc(i.rotulo)}</span>
+          <span class="trilho"><span class="fill" style="width:${Math.max(2, (i.valor / max) * 100)}%"></span></span>
+          <span class="val">${i.valor}</span></li>`
+      )
+      .join("")}</ul>`;
+  }
+
+  // Colunas por dia (atividade). Rótulo só no primeiro, no meio e no último dia.
+  function colunas(dias) {
+    const max = Math.max(1, ...dias.map((d) => d.valor));
+    const meio = Math.floor(dias.length / 2);
+    return `<div class="colunas" role="img" aria-label="Registros por dia">${dias
+      .map(
+        (d, i) => `<div class="col" data-dica="${d.rotulo}: ${d.valor} registro${d.valor === 1 ? "" : "s"}">
+          <span class="fill" style="height:${d.valor ? Math.max(4, (d.valor / max) * 100) : 0}%"></span>
+          ${i === 0 || i === meio || i === dias.length - 1 ? `<small>${d.curto}</small>` : ""}</div>`
+      )
+      .join("")}</div>`;
+  }
+
+  function contar(lista, chave) {
+    const m = new Map();
+    for (const x of lista) m.set(chave(x), (m.get(chave(x)) || 0) + 1);
+    return [...m.entries()].map(([rotulo, valor]) => ({ rotulo, valor })).sort((a, b) => b.valor - a.valor);
+  }
+
+  async function desenharPainel(el, paises, status) {
+    if (!configurado) return (el.innerHTML = `<div class="vazio">O banco de dados ainda não foi ligado.</div>`);
+    if (!usuario) {
+      el.innerHTML = `<div class="trava"><p>O painel mostra dados internos da UniCPO.</p><button class="btn" id="entrarPainel">Entrar para ver</button></div>`;
+      el.querySelector("#entrarPainel").onclick = entrar;
+      return;
+    }
+    el.innerHTML = `<p class="muted">Carregando…</p>`;
+    const { data: regs, error } = await sb.from("registros").select("id, pais, categoria, titulo, autor_nome, criado_em, anexos (tamanho)").order("criado_em", { ascending: false });
+    if (error) return (el.innerHTML = `<p class="erro">Não consegui carregar: ${esc(error.message)}</p>`);
+
+    const nomePais = (id) => paises.find((p) => p.id === id)?.nome || id;
+    const desde = periodo ? Date.now() - periodo * DIA : 0;
+    const noPeriodo = regs.filter((r) => new Date(r.criado_em).getTime() >= desde);
+    const anexosTodos = regs.flatMap((r) => r.anexos);
+    const bytes = anexosTodos.reduce((s, a) => s + (a.tamanho || 0), 0);
+    const comRegistro = new Set(regs.map((r) => r.pais));
+    const ultimo = regs[0];
+
+    // Atividade diária: últimos N dias (no "Tudo", os últimos 90).
+    const nDias = periodo || 90;
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const dias = Array.from({ length: nDias }, (_, i) => {
+      const d = new Date(hoje.getTime() - (nDias - 1 - i) * DIA);
+      return { t: d.getTime(), valor: 0, rotulo: d.toLocaleDateString("pt-BR"), curto: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) };
+    });
+    for (const r of regs) {
+      const d = new Date(r.criado_em);
+      d.setHours(0, 0, 0, 0);
+      const alvo = dias.find((x) => x.t === d.getTime());
+      if (alvo) alvo.valor++;
+    }
+
+    const porPais = contar(noPeriodo, (r) => r.pais).map((x) => ({ ...x, id: x.rotulo, rotulo: nomePais(x.rotulo) }));
+    const porTipo = contar(noPeriodo, (r) => CATEGORIAS[r.categoria] || r.categoria);
+    const porPessoa = contar(noPeriodo, (r) => r.autor_nome || "—");
+    const semRegistro = paises.filter((p) => !comRegistro.has(p.id));
+    const situacao = Object.keys(status).map((s) => ({ s, valor: paises.filter((p) => p.status === s).length }));
+    const maxSit = Math.max(...situacao.map((x) => x.valor));
+
+    el.innerHTML = `
+      <div class="filtros-painel" role="group" aria-label="Período">
+        ${Object.entries(PERIODOS)
+          .sort((a, b) => (+a[0] || 999) - (+b[0] || 999))
+          .map(([k, v]) => `<button data-periodo="${k}" class="${+k === periodo ? "ativo" : ""}">${v}</button>`)
+          .join("")}
+      </div>
+      <div class="kpis">
+        <div class="kpi"><small>Registros no período</small><b>${noPeriodo.length}</b><span>${regs.length} no total</span></div>
+        <div class="kpi"><small>Anexos</small><b>${anexosTodos.length}</b><span>${noPeriodo.reduce((s, r) => s + r.anexos.length, 0)} no período</span></div>
+        <div class="kpi"><small>Espaço usado</small><b>${tamanho(bytes)}</b><span>${((bytes / 1073741824) * 100).toFixed(1).replace(".", ",")}% de 1 GB grátis</span></div>
+        <div class="kpi"><small>Países com registros</small><b>${comRegistro.size} <em>de ${paises.length}</em></b><span>${semRegistro.length} ainda sem nada</span></div>
+        <div class="kpi"><small>Última atualização</small><b class="kpi-texto">${ultimo ? data(ultimo.criado_em).split(",")[0] : "—"}</b><span>${ultimo ? esc(ultimo.autor_nome) + " · " + esc(nomePais(ultimo.pais)) : "Nada ainda"}</span></div>
+      </div>
+      <div class="grade-painel">
+        <section class="cartao largo"><h3>Registros por dia</h3><p class="sub">${periodo ? `Últimos ${periodo} dias` : "Últimos 90 dias"}</p>${colunas(dias)}</section>
+        <section class="cartao"><h3>Registros por país</h3><p class="sub">No período · clique para abrir</p>${barras(porPais, { link: (i) => `#/pais/${i.id}/documentos` })}</section>
+        <section class="cartao"><h3>Por tipo</h3><p class="sub">No período</p>${barras(porTipo)}</section>
+        <section class="cartao"><h3>Quem adicionou</h3><p class="sub">No período</p>${barras(porPessoa)}</section>
+        <section class="cartao"><h3>Situação da convalidação</h3><p class="sub">Dos ${paises.length} países do guia</p>
+          <ul class="barras">${situacao
+            .map(
+              (x) => `<li data-dica="${status[x.s].nome}: ${x.valor} países">
+                <span class="rot"><span class="dot d-${x.s}"></span>${status[x.s].nome}</span>
+                <span class="trilho"><span class="fill f-${x.s}" style="width:${Math.max(2, (x.valor / maxSit) * 100)}%"></span></span>
+                <span class="val">${x.valor}</span></li>`
+            )
+            .join("")}</ul></section>
+        <section class="cartao largo"><h3>Países sem nenhum registro</h3>
+          ${semRegistro.length ? `<div class="chips-paises">${semRegistro.map((p) => `<a href="#/pais/${p.id}/documentos">${esc(p.nome)}</a>`).join("")}</div>` : `<p class="muted">Todos os países têm pelo menos um registro.</p>`}
+        </section>
+        <section class="cartao largo"><h3>Últimos registros</h3>
+          ${
+            regs.length
+              ? `<table class="tabela-simples"><thead><tr><th>Data</th><th>País</th><th>Título</th><th>Tipo</th><th>Quem</th><th>Anexos</th></tr></thead><tbody>${regs
+                  .slice(0, 10)
+                  .map(
+                    (r) => `<tr><td>${data(r.criado_em).split(",")[0]}</td><td><a href="#/pais/${esc(r.pais)}/documentos">${esc(nomePais(r.pais))}</a></td><td>${esc(r.titulo)}</td><td>${CATEGORIAS[r.categoria] || ""}</td><td>${esc(r.autor_nome)}</td><td>${r.anexos.length}</td></tr>`
+                  )
+                  .join("")}</tbody></table>`
+              : `<p class="muted">Nenhum registro ainda.</p>`
+          }
+        </section>
+      </div>
+      <div class="dica" hidden></div>`;
+
+    el.querySelectorAll("[data-periodo]").forEach((b) => b.addEventListener("click", () => ((periodo = +b.dataset.periodo), desenharPainel(el, paises, status))));
+    // Dica ao passar o mouse sobre barras e colunas.
+    const dica = el.querySelector(".dica");
+    el.querySelectorAll("[data-dica]").forEach((alvo) => {
+      alvo.addEventListener("mousemove", (e) => {
+        dica.hidden = false;
+        dica.textContent = alvo.dataset.dica;
+        dica.style.left = e.clientX + 12 + "px";
+        dica.style.top = e.clientY + 12 + "px";
+      });
+      alvo.addEventListener("mouseleave", () => (dica.hidden = true));
+    });
+  }
+
   window.Colab = {
+    desenharPainel,
     configurado,
     iniciar,
     entrar,

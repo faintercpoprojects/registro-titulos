@@ -233,6 +233,13 @@
   }
 
   // ---------- área interna ----------
+  function painel() {
+    marcarMenu("painel");
+    app.innerHTML = `<h1 class="pagina-titulo">Painel</h1>
+      <p class="pagina-sub">Resumo do que o Acadêmico registrou: volume, países, tipos e quem adicionou.</p><div id="painel"></div>`;
+    Colab.desenharPainel(document.getElementById("painel"), PAISES, STATUS);
+  }
+
   function atualizacoes() {
     marcarMenu("");
     app.innerHTML = `<h1 class="pagina-titulo">Últimas atualizações</h1>
@@ -261,6 +268,7 @@
     if (rota === "especialidades") return especialidades(a);
     if (rota === "perguntar") return perguntar();
     if (rota === "atualizacoes") return atualizacoes();
+    if (rota === "painel") return painel();
     if (rota === "equipe") return equipe();
     naoEncontrado();
   }

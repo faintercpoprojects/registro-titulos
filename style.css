@@ -360,3 +360,55 @@ table.equipe td:first-child { position: static; }
 .convidar .erro { margin-top: 10px; }
 @media (max-width: 760px) { .convidar .campos { grid-template-columns: 1fr; } }
 .acoes-pessoa { white-space: nowrap; }
+
+/* ---------- envio em lote ---------- */
+.modal label.check { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 500; padding: 10px 12px; border-radius: 10px; background: var(--bg); cursor: pointer; }
+.modal label.check input { width: auto; margin-top: 3px; }
+.progresso { display: flex; flex-direction: column; gap: 6px; }
+.progresso .barra { height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.progresso .barra span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.2s; }
+.progresso small { color: var(--muted); }
+
+/* ---------- painel ---------- */
+.filtros-painel { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); margin-bottom: 16px; }
+.filtros-painel button { border: 0; background: none; padding: 7px 14px; border-radius: 8px; font: 500 13px "Inter", sans-serif; color: var(--muted); cursor: pointer; }
+.filtros-painel button.ativo { background: var(--navy); color: #fff; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { padding: 16px 18px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.kpi small { color: var(--muted); font-size: 13px; }
+.kpi b { font: 700 30px "Montserrat", sans-serif; color: var(--ink); line-height: 1.2; }
+.kpi b em { font: 500 15px "Inter", sans-serif; color: var(--muted); font-style: normal; }
+.kpi b.kpi-texto { font-size: 22px; }
+.kpi span { color: var(--muted); font-size: 13px; }
+.grade-painel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.cartao { padding: 18px 20px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); min-width: 0; }
+.cartao.largo { grid-column: 1 / -1; }
+.cartao h3 { margin: 0; font-size: 16px; color: var(--ink); }
+.cartao .sub { margin: 2px 0 14px; color: var(--muted); font-size: 13px; }
+.barras { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.barras li { display: grid; grid-template-columns: minmax(90px, 34%) 1fr 36px; align-items: center; gap: 10px; font-size: 14px; padding: 2px 0; }
+.barras .rot { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.barras .rot a { color: var(--ink); text-decoration: none; }
+.barras .rot a:hover { text-decoration: underline; }
+.barras .trilho { height: 12px; }
+.barras .fill { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
+.barras .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.fill.f-convalida { background: var(--convalida); }
+.fill.f-parcial { background: var(--parcial); }
+.fill.f-condicoes { background: var(--condicoes); }
+.fill.f-nao { background: var(--nao); }
+.fill.f-sem-info { background: var(--sem-info); }
+.colunas { display: flex; align-items: flex-end; gap: 2px; height: 160px; border-bottom: 1px solid var(--line); padding-bottom: 0; position: relative; margin-bottom: 22px; }
+.colunas .col { flex: 1; height: 100%; display: flex; align-items: flex-end; position: relative; min-width: 2px; }
+.colunas .col:hover { background: rgba(31, 122, 140, 0.06); }
+.colunas .fill { display: block; width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+.colunas small { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.chips-paises { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chips-paises a { padding: 6px 12px; border-radius: 999px; background: var(--bg); color: var(--ink); text-decoration: none; font-size: 13px; }
+.chips-paises a:hover { background: #e8eef4; }
+.tabela-simples { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 14px; margin-top: 10px; }
+.tabela-simples th, .tabela-simples td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); position: static; }
+.tabela-simples th { background: var(--bg); cursor: default; }
+.cartao.largo:has(.tabela-simples) { overflow-x: auto; }
+.dica { position: fixed; z-index: 60; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--navy); color: #fff; font-size: 13px; box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
+@media (max-width: 760px) { .grade-painel { grid-template-columns: 1fr; } }
