@@ -412,3 +412,44 @@ table.equipe td:first-child { position: static; }
 .cartao.largo:has(.tabela-simples) { overflow-x: auto; }
 .dica { position: fixed; z-index: 60; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--navy); color: #fff; font-size: 13px; box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
 @media (max-width: 760px) { .grade-painel { grid-template-columns: 1fr; } }
+
+/* ---------- painel: alunos convalidados ---------- */
+.cat-titulo_convalidado { background: var(--convalida-bg); color: var(--convalida); }
+.cat-esp { background: #eaf0f6; color: var(--navy); }
+.dica-campo { font-weight: 400; color: var(--muted); font-size: 12px; }
+.dica-campo:empty { display: none; }
+.filtros-painel-linha { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+.filtros-painel-linha .filtros-painel { margin: 0; }
+.filtros-painel-linha select { padding: 8px 12px; }
+.filtros-painel-linha .espaco { flex: 1; }
+.kpis-destaque .kpi.principal { background: var(--navy); border-color: var(--navy); }
+.kpis-destaque .kpi.principal small, .kpis-destaque .kpi.principal span { color: #cfdbe7; }
+.kpis-destaque .kpi.principal b { color: #fff; font-size: 40px; }
+.mini-bandeira { width: 20px; height: 14px; border-radius: 2px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0,0,0,0.08); flex: none; margin-right: 6px; vertical-align: -2px; }
+.colunas .col em { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--h, 0%) + 4px); font-style: normal; font-size: 11px; color: var(--muted); }
+.colunas .col { flex-direction: column; justify-content: flex-end; align-items: stretch; }
+.colunas .col em { position: static; transform: none; text-align: center; margin-bottom: 2px; }
+table.matriz { min-width: 760px; font-size: 14px; }
+table.matriz th { font-size: 12px; font-weight: 600; white-space: nowrap; cursor: default; }
+table.matriz td, table.matriz th { text-align: center; padding: 8px 6px; }
+table.matriz td:first-child, table.matriz th:first-child { text-align: left; }
+table.matriz td:first-child a { display: flex; align-items: center; color: var(--ink); text-decoration: none; font-weight: 500; white-space: nowrap; }
+table.matriz .calor { display: inline-grid; place-items: center; min-width: 30px; height: 28px; padding: 0 6px; border-radius: 8px; font-weight: 700; color: #fff; background: rgba(31, 122, 140, var(--a)); }
+table.matriz .zero { color: #c3ccd6; }
+table.matriz .total { font-weight: 700; color: var(--navy); }
+table.matriz tfoot td { font-weight: 600; background: var(--bg); border-top: 2px solid var(--line); }
+.nota-painel { margin-top: 14px; }
+.so-imprimir { display: none; }
+
+@media print {
+  .topbar, .footer, .nao-imprimir, .dica, .voltar { display: none !important; }
+  body { background: #fff; }
+  main { max-width: none; padding: 0; }
+  .so-imprimir { display: block; font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .pagina-titulo { margin-top: 0; }
+  .cartao, .kpi { break-inside: avoid; box-shadow: none; }
+  .kpis-destaque .kpi.principal { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .fill, .calor, .mini-bandeira { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .grade-painel { grid-template-columns: 1fr 1fr; }
+  .tabela-wrap { overflow: visible; border: 0; }
+}

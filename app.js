@@ -235,9 +235,9 @@
   // ---------- área interna ----------
   function painel() {
     marcarMenu("painel");
-    app.innerHTML = `<h1 class="pagina-titulo">Painel</h1>
-      <p class="pagina-sub">Resumo do que o Acadêmico registrou: volume, países, tipos e quem adicionou.</p><div id="painel"></div>`;
-    Colab.desenharPainel(document.getElementById("painel"), PAISES, STATUS);
+    app.innerHTML = `<h1 class="pagina-titulo">Alunos convalidados</h1>
+      <p class="pagina-sub nao-imprimir">Alunos com título convalidado por país e especialidade, para apresentar à diretoria e usar nas vendas.</p><div id="painel"></div>`;
+    Colab.desenharPainel(document.getElementById("painel"), PAISES);
   }
 
   function atualizacoes() {

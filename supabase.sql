@@ -145,3 +145,27 @@ create policy "anexos storage: apagar" on storage.objects for delete to authenti
 -- Troque o e-mail abaixo pelo seu e rode só esta linha para virar administrador:
 -- update public.perfis set papel = 'admin' where email = 'seu-email@exemplo.com';
 
+
+-- ---------- especialidade de cada envio (27/10/2026) ----------
+alter table public.registros add column if not exists especialidade text
+  check (especialidade is null or especialidade in ('IMPL', 'PERIO', 'PROT', 'ODONTOP', 'ENDO', 'ORTO', 'DENT', 'AOF'));
+create index if not exists registros_especialidade on public.registros (pais, especialidade);
+-- Registros antigos: reconhece a especialidade pelo título.
+update public.registros set especialidade = case
+  when titulo ~* 'odontop|odontoped|pediatr' then 'ODONTOP'
+  when titulo ~* 'implant|\mimpl\M' then 'IMPL'
+  when titulo ~* 'periodont|\mperio\M' then 'PERIO'
+  when titulo ~* 'pr[oó]tese|\mprot\M' then 'PROT'
+  when titulo ~* 'endodont|\mendo\M' then 'ENDO'
+  when titulo ~* 'ortodont|\morto\M' then 'ORTO'
+  when titulo ~* 'dent[ií]stica|\mdent\M' then 'DENT'
+  when titulo ~* '\maof\M|orofacial' then 'AOF'
+end
+where especialidade is null;
+
+-- ---------- títulos convalidados de alunos (27/10/2026) ----------
+-- Cada diploma convalidado enviado conta como um aluno no Painel.
+alter table public.registros drop constraint if exists registros_categoria_check;
+alter table public.registros add constraint registros_categoria_check
+  check (categoria in ('titulo_convalidado', 'informacao', 'documento', 'resposta_orgao', 'andamento_aluno'));
+update public.registros set categoria = 'titulo_convalidado' where titulo ~* 'convalidad';

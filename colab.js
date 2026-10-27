@@ -3,7 +3,9 @@
 (() => {
   const BUCKET = "anexos";
   const MAX_MB = 50;
+  // "titulo_convalidado" é o que o Painel conta como aluno convalidado.
   const CATEGORIAS = {
+    titulo_convalidado: "Título convalidado (aluno)",
     informacao: "Informação",
     documento: "Documento / modelo",
     resposta_orgao: "Resposta de órgão",
@@ -201,7 +203,7 @@
     el.innerHTML = `<p class="muted">Carregando…</p>`;
     const { data: regs, error } = await sb
       .from("registros")
-      .select("id, categoria, titulo, conteudo, autor_nome, criado_em, atualizado_em, anexos (id, nome, caminho, tamanho, tipo, criado_em)")
+      .select("id, categoria, especialidade, titulo, conteudo, autor_nome, criado_em, atualizado_em, anexos (id, nome, caminho, tamanho, tipo, criado_em)")
       .eq("pais", pais.id)
       .order("criado_em", { ascending: false });
     if (error) {
@@ -243,6 +245,7 @@
       <article class="reg">
         <header>
           <span class="cat cat-${r.categoria}">${CATEGORIAS[r.categoria] || r.categoria}</span>
+          ${r.especialidade ? `<span class="cat cat-esp" title="${esc(nomeEsp(r.especialidade))}">${esc(nomeEsp(r.especialidade))}</span>` : ""}
           <h3>${esc(r.titulo)}</h3>
           ${
             podeEditar()
@@ -272,6 +275,23 @@
     if (error) return alert("Não consegui abrir o arquivo: " + error.message);
     window.open(d.signedUrl, "_blank", "noopener");
   }
+
+  // Reconhece a especialidade pelo nome do arquivo ou título ("... - Orto T40.pdf", "... em Protese 2026").
+  const PADROES_ESP = [
+    ["ODONTOP", /odontop|odontoped|pediatr/],
+    ["IMPL", /implant|\bimpl\b/],
+    ["PERIO", /periodont|\bperio\b/],
+    ["PROT", /protese|\bprot\b/],
+    ["ENDO", /endodont|\bendo\b/],
+    ["ORTO", /ortodont|\borto\b/],
+    ["DENT", /dentistica|\bdent\b/],
+    ["AOF", /\baof\b|orofacial/],
+  ];
+  function detectarEsp(texto) {
+    const t = String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    return PADROES_ESP.find(([, re]) => re.test(t))?.[0] || null;
+  }
+  const nomeEsp = (sigla) => (window.ESPECIALIDADES || []).find((e) => e.sigla === sigla)?.nome || sigla;
 
   // Roda tarefas com no máximo "limite" ao mesmo tempo (envios em paralelo sem travar a conexão).
   async function emParalelo(itens, limite, tarefa) {
@@ -324,7 +344,14 @@
              ? ""
              : `<label class="check"><input type="checkbox" name="lote"> Vários documentos de uma vez: cada arquivo vira um registro, com o nome do arquivo como título</label>`
          }
-         <label class="campo-titulo">Título<input name="titulo" required maxlength="200" value="${esc(reg?.titulo || "")}" placeholder="Ex.: Resposta da SUNEDU sobre AOF"></label>
+         <label>Especialidade
+           <select name="especialidade">
+             <option value="">Não se aplica / várias</option>
+             ${(window.ESPECIALIDADES || []).map((e) => `<option value="${e.sigla}" ${reg?.especialidade === e.sigla ? "selected" : ""}>${esc(e.nome)}</option>`).join("")}
+           </select>
+           <small class="dica-campo" id="dicaEsp"></small>
+         </label>
+         <label class="campo-titulo">Título<input name="titulo" required maxlength="200" value="${esc(reg?.titulo || "")}" placeholder="Ex.: Título convalidado de Ortodontia - Fulano"></label>
          <label>Informações<textarea name="conteudo" rows="6" placeholder="Detalhes, prazos, contatos, links…">${esc(reg?.conteudo || "")}</textarea></label>
          <div class="anexar">
            <span>Anexos</span>
@@ -345,15 +372,33 @@
         const prog = m.querySelector(".progresso");
         const botao = f.querySelector(".btn:not(.btn-sec)");
         // Modo lote: o título vem do nome de cada arquivo, então o campo título some.
+        const dicaEsp = m.querySelector("#dicaEsp");
+        const atualizarDicaEsp = () =>
+          (dicaEsp.textContent = f.lote?.checked
+            ? "No envio em lote, a especialidade é reconhecida pelo nome de cada arquivo (Orto, Prot, Endo...). A escolhida aqui vale para os que não forem reconhecidos."
+            : "");
         f.lote?.addEventListener("change", () => {
           m.querySelector(".campo-titulo").hidden = f.lote.checked;
           f.titulo.required = !f.lote.checked;
+          atualizarDicaEsp();
+          desenharLista();
         });
+        // Sem especialidade escolhida: tenta reconhecer pelo título digitado.
+        f.titulo.addEventListener("input", () => {
+          if (!f.especialidade.dataset.manual) f.especialidade.value = detectarEsp(f.titulo.value) || "";
+        });
+        f.especialidade.addEventListener("change", () => (f.especialidade.dataset.manual = "1"));
         const desenharLista = () => {
           const antigos = (reg?.anexos || []).filter((a) => !remover.has(a.id));
           lista.innerHTML =
             antigos.map((a) => `<li><span>${esc(a.nome)}</span><small>${tamanho(a.tamanho)}</small><button type="button" class="link perigo" data-tirar-antigo="${a.id}">remover</button></li>`).join("") +
-            novos.map((a, i) => `<li class="novo"><span>${esc(a.name)}</span><small>${tamanho(a.size)} · novo</small><button type="button" class="link perigo" data-tirar-novo="${i}">remover</button></li>`).join("");
+            novos
+              .map((a, i) => {
+                const esp = f.lote?.checked ? detectarEsp(a.name) || f.especialidade.value : "";
+                const rotulo = f.lote?.checked ? ` · ${esp ? esc(nomeEsp(esp)) : "sem especialidade"}` : "";
+                return `<li class="novo"><span>${esc(a.name)}</span><small>${tamanho(a.size)}${rotulo}</small><button type="button" class="link perigo" data-tirar-novo="${i}">remover</button></li>`;
+              })
+              .join("");
           lista.querySelectorAll("[data-tirar-antigo]").forEach((b) => (b.onclick = () => (remover.add(b.dataset.tirarAntigo), desenharLista())));
           lista.querySelectorAll("[data-tirar-novo]").forEach((b) => (b.onclick = () => (novos.splice(+b.dataset.tirarNovo, 1), desenharLista())));
         };
@@ -399,12 +444,18 @@
           ocupado(f, true);
           botao.textContent = "Enviando…";
           try {
-            const campos = { categoria: f.categoria.value, titulo: f.titulo.value.trim(), conteudo: f.conteudo.value.trim() };
+            const campos = {
+              categoria: f.categoria.value,
+              titulo: f.titulo.value.trim(),
+              conteudo: f.conteudo.value.trim(),
+              especialidade: f.especialidade.value || detectarEsp(f.titulo.value) || null,
+            };
             if (lote) {
               // Um registro por arquivo, vários ao mesmo tempo.
               await emParalelo(novos, 4, async (file) => {
                 const titulo = file.name.replace(/\.[^.]+$/, "").slice(0, 200) || file.name;
-                const { data: novo, error } = await sb.from("registros").insert({ ...campos, titulo, pais: pais.id }).select("id").single();
+                const especialidade = detectarEsp(file.name) || f.especialidade.value || null;
+                const { data: novo, error } = await sb.from("registros").insert({ ...campos, titulo, especialidade, pais: pais.id }).select("id").single();
                 if (error) throw error;
                 await anexar(novo.id, file);
               });
@@ -611,44 +662,56 @@
   }
 
   // ---------- painel (dashboard) ----------
-  const DIA = 86400000;
-  const PERIODOS = { 7: "7 dias", 30: "30 dias", 90: "90 dias", 0: "Tudo" };
-  let periodo = 30;
+  // Foco comercial: quantos alunos têm o título convalidado, em quais países e em quais especialidades.
+  // Cada registro do tipo "Título convalidado (aluno)" conta como um aluno.
+  const PERIODOS = { 3: "3 meses", 6: "6 meses", 12: "12 meses", 0: "Tudo" };
+  const filtroPainel = { meses: 0, pais: "", esp: "" };
 
-  // Barras horizontais de uma série só (uma cor, rótulo e valor em texto).
+  const inicioMes = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+  const rotuloMes = (d) => d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "") + "/" + String(d.getFullYear()).slice(2);
+
+  // Barras horizontais de uma série só: uma cor, rótulo e valor em texto.
   function barras(itens, { link } = {}) {
-    if (!itens.length) return `<p class="muted">Nada no período.</p>`;
+    if (!itens.length) return `<p class="muted">Nenhum aluno convalidado nesse filtro.</p>`;
     const max = Math.max(...itens.map((i) => i.valor)) || 1;
     return `<ul class="barras">${itens
       .map(
-        (i) => `<li data-dica="${esc(i.rotulo)}: ${i.valor}${i.extra ? " · " + esc(i.extra) : ""}">
-          <span class="rot">${link ? `<a href="${link(i)}">${esc(i.rotulo)}</a>` : esc(i.rotulo)}</span>
+        (i) => `<li data-dica="${esc(i.rotulo)}: ${i.valor} aluno${i.valor === 1 ? "" : "s"}${i.extra ? " · " + esc(i.extra) : ""}">
+          <span class="rot">${i.bandeira ? `<img class="mini-bandeira" src="https://flagcdn.com/w40/${i.bandeira}.png" alt="">` : ""}${
+            link ? `<a href="${link(i)}">${esc(i.rotulo)}</a>` : esc(i.rotulo)
+          }</span>
           <span class="trilho"><span class="fill" style="width:${Math.max(2, (i.valor / max) * 100)}%"></span></span>
           <span class="val">${i.valor}</span></li>`
       )
       .join("")}</ul>`;
   }
 
-  // Colunas por dia (atividade). Rótulo só no primeiro, no meio e no último dia.
-  function colunas(dias) {
-    const max = Math.max(1, ...dias.map((d) => d.valor));
-    const meio = Math.floor(dias.length / 2);
-    return `<div class="colunas" role="img" aria-label="Registros por dia">${dias
+  // Colunas por mês. Rótulo em todos quando cabem; senão, a cada 2.
+  function colunas(meses) {
+    const max = Math.max(1, ...meses.map((d) => d.valor));
+    const passo = meses.length > 12 ? 3 : meses.length > 6 ? 2 : 1;
+    return `<div class="colunas" role="img" aria-label="Alunos convalidados por mês">${meses
       .map(
-        (d, i) => `<div class="col" data-dica="${d.rotulo}: ${d.valor} registro${d.valor === 1 ? "" : "s"}">
+        (d, i) => `<div class="col" data-dica="${d.rotulo}: ${d.valor} aluno${d.valor === 1 ? "" : "s"}">
+          ${d.valor ? `<em>${d.valor}</em>` : ""}
           <span class="fill" style="height:${d.valor ? Math.max(4, (d.valor / max) * 100) : 0}%"></span>
-          ${i === 0 || i === meio || i === dias.length - 1 ? `<small>${d.curto}</small>` : ""}</div>`
+          ${i % passo === 0 || i === meses.length - 1 ? `<small>${d.rotulo}</small>` : ""}</div>`
       )
       .join("")}</div>`;
   }
 
   function contar(lista, chave) {
     const m = new Map();
-    for (const x of lista) m.set(chave(x), (m.get(chave(x)) || 0) + 1);
+    for (const x of lista) {
+      const k = chave(x);
+      if (k) m.set(k, (m.get(k) || 0) + 1);
+    }
     return [...m.entries()].map(([rotulo, valor]) => ({ rotulo, valor })).sort((a, b) => b.valor - a.valor);
   }
 
-  async function desenharPainel(el, paises, status) {
+  let ultimosAlunos = [];
+
+  async function desenharPainel(el, paises) {
     if (!configurado) return (el.innerHTML = `<div class="vazio">O banco de dados ainda não foi ligado.</div>`);
     if (!usuario) {
       el.innerHTML = `<div class="trava"><p>O painel mostra dados internos da UniCPO.</p><button class="btn" id="entrarPainel">Entrar para ver</button></div>`;
@@ -656,87 +719,141 @@
       return;
     }
     el.innerHTML = `<p class="muted">Carregando…</p>`;
-    const { data: regs, error } = await sb.from("registros").select("id, pais, categoria, titulo, autor_nome, criado_em, anexos (tamanho)").order("criado_em", { ascending: false });
+    const { data: regs, error } = await sb
+      .from("registros")
+      .select("id, pais, especialidade, titulo, criado_em")
+      .eq("categoria", "titulo_convalidado")
+      .order("criado_em", { ascending: false });
     if (error) return (el.innerHTML = `<p class="erro">Não consegui carregar: ${esc(error.message)}</p>`);
 
-    const nomePais = (id) => paises.find((p) => p.id === id)?.nome || id;
-    const desde = periodo ? Date.now() - periodo * DIA : 0;
-    const noPeriodo = regs.filter((r) => new Date(r.criado_em).getTime() >= desde);
-    const anexosTodos = regs.flatMap((r) => r.anexos);
-    const bytes = anexosTodos.reduce((s, a) => s + (a.tamanho || 0), 0);
-    const comRegistro = new Set(regs.map((r) => r.pais));
-    const ultimo = regs[0];
-
-    // Atividade diária: últimos N dias (no "Tudo", os últimos 90).
-    const nDias = periodo || 90;
+    const ESPS = window.ESPECIALIDADES || [];
+    const pais = (id) => paises.find((p) => p.id === id);
+    const nomePais = (id) => pais(id)?.nome || id;
     const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
-    const dias = Array.from({ length: nDias }, (_, i) => {
-      const d = new Date(hoje.getTime() - (nDias - 1 - i) * DIA);
-      return { t: d.getTime(), valor: 0, rotulo: d.toLocaleDateString("pt-BR"), curto: d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) };
-    });
-    for (const r of regs) {
-      const d = new Date(r.criado_em);
-      d.setHours(0, 0, 0, 0);
-      const alvo = dias.find((x) => x.t === d.getTime());
+    const desde = filtroPainel.meses ? inicioMes(new Date(hoje.getFullYear(), hoje.getMonth() - filtroPainel.meses + 1, 1)) : null;
+
+    // Período, país e especialidade escolhidos.
+    const alunos = regs.filter(
+      (r) =>
+        (!desde || new Date(r.criado_em) >= desde) &&
+        (!filtroPainel.pais || r.pais === filtroPainel.pais) &&
+        (!filtroPainel.esp || r.especialidade === filtroPainel.esp)
+    );
+    ultimosAlunos = alunos;
+    const paisesCom = new Set(alunos.map((r) => r.pais));
+    const espsCom = new Set(alunos.map((r) => r.especialidade).filter(Boolean));
+    const semEsp = alunos.filter((r) => !r.especialidade).length;
+
+    // Meses do gráfico: do período escolhido (no "Tudo", do primeiro envio até hoje, no mínimo 6).
+    const primeiro = regs.length ? inicioMes(new Date(regs[regs.length - 1].criado_em)) : inicioMes(hoje);
+    const inicio = desde || new Date(Math.min(primeiro, new Date(hoje.getFullYear(), hoje.getMonth() - 5, 1)));
+    const meses = [];
+    for (let d = inicioMes(inicio); d <= hoje; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) meses.push({ t: d.getTime(), rotulo: rotuloMes(d), valor: 0 });
+    for (const r of alunos) {
+      const alvo = meses.find((m) => m.t === inicioMes(new Date(r.criado_em)).getTime());
       if (alvo) alvo.valor++;
     }
+    const novosMes = meses.length ? meses[meses.length - 1].valor : 0;
 
-    const porPais = contar(noPeriodo, (r) => r.pais).map((x) => ({ ...x, id: x.rotulo, rotulo: nomePais(x.rotulo) }));
-    const porTipo = contar(noPeriodo, (r) => CATEGORIAS[r.categoria] || r.categoria);
-    const porPessoa = contar(noPeriodo, (r) => r.autor_nome || "—");
-    const semRegistro = paises.filter((p) => !comRegistro.has(p.id));
-    const situacao = Object.keys(status).map((s) => ({ s, valor: paises.filter((p) => p.status === s).length }));
-    const maxSit = Math.max(...situacao.map((x) => x.valor));
+    const porPais = contar(alunos, (r) => r.pais).map((x) => ({ ...x, id: x.rotulo, rotulo: nomePais(x.rotulo), bandeira: pais(x.rotulo)?.bandeira }));
+    const porEsp = contar(alunos, (r) => r.especialidade).map((x) => ({ ...x, sigla: x.rotulo, rotulo: nomeEsp(x.rotulo) }));
+
+    // Matriz país × especialidade (só países com alunos).
+    const linhas = porPais.map((p) => ({ ...p, cel: ESPS.map((e) => alunos.filter((r) => r.pais === p.id && r.especialidade === e.sigla).length) }));
+    const maxCel = Math.max(1, ...linhas.flatMap((l) => l.cel));
+    const totEsp = ESPS.map((e, i) => linhas.reduce((s, l) => s + l.cel[i], 0));
+
+    const textoFiltro = [
+      filtroPainel.meses ? `últimos ${PERIODOS[filtroPainel.meses]}` : "todo o período",
+      filtroPainel.pais && nomePais(filtroPainel.pais),
+      filtroPainel.esp && nomeEsp(filtroPainel.esp),
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
     el.innerHTML = `
-      <div class="filtros-painel" role="group" aria-label="Período">
-        ${Object.entries(PERIODOS)
-          .sort((a, b) => (+a[0] || 999) - (+b[0] || 999))
-          .map(([k, v]) => `<button data-periodo="${k}" class="${+k === periodo ? "ativo" : ""}">${v}</button>`)
-          .join("")}
+      <div class="filtros-painel-linha nao-imprimir">
+        <div class="filtros-painel" role="group" aria-label="Período">
+          ${[3, 6, 12, 0].map((k) => `<button data-meses="${k}" class="${k === filtroPainel.meses ? "ativo" : ""}">${PERIODOS[k]}</button>`).join("")}
+        </div>
+        <select id="fpPais" aria-label="País"><option value="">Todos os países</option>${paises
+          .map((p) => `<option value="${p.id}" ${filtroPainel.pais === p.id ? "selected" : ""}>${esc(p.nome)}</option>`)
+          .join("")}</select>
+        <select id="fpEsp" aria-label="Especialidade"><option value="">Todas as especialidades</option>${ESPS.map(
+          (e) => `<option value="${e.sigla}" ${filtroPainel.esp === e.sigla ? "selected" : ""}>${esc(e.nome)}</option>`
+        ).join("")}</select>
+        <span class="espaco"></span>
+        <button class="btn-sec" id="baixarCsv">Baixar planilha</button>
+        <button class="btn" id="imprimir">Imprimir / PDF</button>
       </div>
-      <div class="kpis">
-        <div class="kpi"><small>Registros no período</small><b>${noPeriodo.length}</b><span>${regs.length} no total</span></div>
-        <div class="kpi"><small>Anexos</small><b>${anexosTodos.length}</b><span>${noPeriodo.reduce((s, r) => s + r.anexos.length, 0)} no período</span></div>
-        <div class="kpi"><small>Espaço usado</small><b>${tamanho(bytes)}</b><span>${((bytes / 1073741824) * 100).toFixed(1).replace(".", ",")}% de 1 GB grátis</span></div>
-        <div class="kpi"><small>Países com registros</small><b>${comRegistro.size} <em>de ${paises.length}</em></b><span>${semRegistro.length} ainda sem nada</span></div>
-        <div class="kpi"><small>Última atualização</small><b class="kpi-texto">${ultimo ? data(ultimo.criado_em).split(",")[0] : "—"}</b><span>${ultimo ? esc(ultimo.autor_nome) + " · " + esc(nomePais(ultimo.pais)) : "Nada ainda"}</span></div>
+      <p class="so-imprimir">Registro de Títulos UniCPO · Alunos com título convalidado · ${esc(textoFiltro)} · emitido em ${hoje.toLocaleDateString("pt-BR")}</p>
+
+      <div class="kpis kpis-destaque">
+        <div class="kpi principal"><small>Alunos com título convalidado</small><b>${alunos.length}</b><span>${esc(textoFiltro)}</span></div>
+        <div class="kpi"><small>Países com alunos convalidados</small><b>${paisesCom.size}</b><span>de ${paises.length} países acompanhados</span></div>
+        <div class="kpi"><small>Especialidades convalidadas</small><b>${espsCom.size} <em>de ${ESPS.length}</em></b><span>${
+      espsCom.size ? [...espsCom].map(nomeEsp).join(", ") : "nenhuma ainda"
+    }</span></div>
+        <div class="kpi"><small>Novos neste mês</small><b>${novosMes}</b><span>${rotuloMes(hoje)}</span></div>
       </div>
+
       <div class="grade-painel">
-        <section class="cartao largo"><h3>Registros por dia</h3><p class="sub">${periodo ? `Últimos ${periodo} dias` : "Últimos 90 dias"}</p>${colunas(dias)}</section>
-        <section class="cartao"><h3>Registros por país</h3><p class="sub">No período · clique para abrir</p>${barras(porPais, { link: (i) => `#/pais/${i.id}/documentos` })}</section>
-        <section class="cartao"><h3>Por tipo</h3><p class="sub">No período</p>${barras(porTipo)}</section>
-        <section class="cartao"><h3>Quem adicionou</h3><p class="sub">No período</p>${barras(porPessoa)}</section>
-        <section class="cartao"><h3>Situação da convalidação</h3><p class="sub">Dos ${paises.length} países do guia</p>
-          <ul class="barras">${situacao
-            .map(
-              (x) => `<li data-dica="${status[x.s].nome}: ${x.valor} países">
-                <span class="rot"><span class="dot d-${x.s}"></span>${status[x.s].nome}</span>
-                <span class="trilho"><span class="fill f-${x.s}" style="width:${Math.max(2, (x.valor / maxSit) * 100)}%"></span></span>
-                <span class="val">${x.valor}</span></li>`
-            )
-            .join("")}</ul></section>
-        <section class="cartao largo"><h3>Países sem nenhum registro</h3>
-          ${semRegistro.length ? `<div class="chips-paises">${semRegistro.map((p) => `<a href="#/pais/${p.id}/documentos">${esc(p.nome)}</a>`).join("")}</div>` : `<p class="muted">Todos os países têm pelo menos um registro.</p>`}
-        </section>
-        <section class="cartao largo"><h3>Últimos registros</h3>
+        <section class="cartao"><h3>Alunos convalidados por país</h3><p class="sub">Clique no país para ver os títulos</p>
+          ${barras(porPais, { link: (i) => `#/pais/${i.id}/documentos` })}</section>
+        <section class="cartao"><h3>Alunos convalidados por especialidade</h3><p class="sub">${esc(textoFiltro)}</p>
+          ${barras(porEsp)}${semEsp ? `<p class="muted">${semEsp} título${semEsp === 1 ? "" : "s"} sem especialidade informada.</p>` : ""}</section>
+
+        <section class="cartao largo"><h3>País × especialidade</h3><p class="sub">Quantidade de alunos convalidados em cada combinação</p>
           ${
-            regs.length
-              ? `<table class="tabela-simples"><thead><tr><th>Data</th><th>País</th><th>Título</th><th>Tipo</th><th>Quem</th><th>Anexos</th></tr></thead><tbody>${regs
-                  .slice(0, 10)
+            linhas.length
+              ? `<div class="tabela-wrap"><table class="matriz">
+                  <thead><tr><th>País</th>${ESPS.map((e) => `<th title="${esc(e.nome)}">${esc(e.nome)}</th>`).join("")}<th>Total</th></tr></thead>
+                  <tbody>${linhas
+                    .map(
+                      (l) => `<tr><td><a href="#/pais/${l.id}/documentos">${l.bandeira ? `<img class="mini-bandeira" src="https://flagcdn.com/w40/${l.bandeira}.png" alt="">` : ""}${esc(l.rotulo)}</a></td>${l.cel
+                        .map(
+                          (v, i) =>
+                            `<td data-dica="${esc(l.rotulo)} · ${esc(ESPS[i].nome)}: ${v} aluno${v === 1 ? "" : "s"}">${
+                              v ? `<span class="calor" style="--a:${(0.18 + (v / maxCel) * 0.82).toFixed(2)}">${v}</span>` : `<span class="zero">–</span>`
+                            }</td>`
+                        )
+                        .join("")}<td class="total">${l.valor}</td></tr>`
+                    )
+                    .join("")}</tbody>
+                  <tfoot><tr><td>Total</td>${totEsp.map((v) => `<td>${v || "–"}</td>`).join("")}<td class="total">${alunos.length}</td></tr></tfoot>
+                </table></div>`
+              : `<p class="muted">Nenhum aluno convalidado nesse filtro.</p>`
+          }
+        </section>
+
+        <section class="cartao largo"><h3>Alunos convalidados por mês</h3><p class="sub">Data em que o título foi registrado no site</p>${colunas(meses)}</section>
+
+        <section class="cartao largo"><h3>Títulos registrados</h3><p class="sub">${alunos.length} no filtro${alunos.length > 15 ? " · mostrando os 15 mais recentes (a planilha traz todos)" : ""}</p>
+          ${
+            alunos.length
+              ? `<div class="tabela-wrap"><table class="tabela-simples"><thead><tr><th>Data</th><th>País</th><th>Especialidade</th><th>Título / aluno</th></tr></thead><tbody>${alunos
+                  .slice(0, 15)
                   .map(
-                    (r) => `<tr><td>${data(r.criado_em).split(",")[0]}</td><td><a href="#/pais/${esc(r.pais)}/documentos">${esc(nomePais(r.pais))}</a></td><td>${esc(r.titulo)}</td><td>${CATEGORIAS[r.categoria] || ""}</td><td>${esc(r.autor_nome)}</td><td>${r.anexos.length}</td></tr>`
+                    (r) =>
+                      `<tr><td>${new Date(r.criado_em).toLocaleDateString("pt-BR")}</td><td>${esc(nomePais(r.pais))}</td><td>${esc(
+                        r.especialidade ? nomeEsp(r.especialidade) : "—"
+                      )}</td><td>${esc(r.titulo)}</td></tr>`
                   )
-                  .join("")}</tbody></table>`
-              : `<p class="muted">Nenhum registro ainda.</p>`
+                  .join("")}</tbody></table></div>`
+              : `<p class="muted">Nada ainda.</p>`
           }
         </section>
       </div>
+      <p class="muted nota-painel">Conta como aluno cada registro do tipo “Título convalidado (aluno)”. Para entrar aqui, o Acadêmico envia o diploma convalidado com esse tipo.</p>
       <div class="dica" hidden></div>`;
 
-    el.querySelectorAll("[data-periodo]").forEach((b) => b.addEventListener("click", () => ((periodo = +b.dataset.periodo), desenharPainel(el, paises, status))));
-    // Dica ao passar o mouse sobre barras e colunas.
+    const redesenhar = () => desenharPainel(el, paises);
+    el.querySelectorAll("[data-meses]").forEach((b) => b.addEventListener("click", () => ((filtroPainel.meses = +b.dataset.meses), redesenhar())));
+    el.querySelector("#fpPais").addEventListener("change", (e) => ((filtroPainel.pais = e.target.value), redesenhar()));
+    el.querySelector("#fpEsp").addEventListener("change", (e) => ((filtroPainel.esp = e.target.value), redesenhar()));
+    el.querySelector("#imprimir").addEventListener("click", () => window.print());
+    el.querySelector("#baixarCsv").addEventListener("click", () => baixarCsv(nomePais));
+
     const dica = el.querySelector(".dica");
     el.querySelectorAll("[data-dica]").forEach((alvo) => {
       alvo.addEventListener("mousemove", (e) => {
@@ -747,6 +864,20 @@
       });
       alvo.addEventListener("mouseleave", () => (dica.hidden = true));
     });
+  }
+
+  // Planilha (CSV para Excel) com todos os alunos do filtro atual.
+  function baixarCsv(nomePais) {
+    const cel = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const linhas = [["Data", "País", "Especialidade", "Título / aluno"]].concat(
+      ultimosAlunos.map((r) => [new Date(r.criado_em).toLocaleDateString("pt-BR"), nomePais(r.pais), r.especialidade ? nomeEsp(r.especialidade) : "", r.titulo])
+    );
+    const csv = "﻿" + linhas.map((l) => l.map(cel).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `alunos-convalidados-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   window.Colab = {
