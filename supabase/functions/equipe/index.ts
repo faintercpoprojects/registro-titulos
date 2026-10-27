@@ -77,6 +77,16 @@ Deno.serve(async (req) => {
     return resposta(200, { ok: true, link });
   }
 
+  if (corpo.acao === "senha") {
+    // Link para a pessoa criar uma senha nova, sem depender de e-mail (o administrador manda por WhatsApp).
+    const { data: alvo, error: e1 } = await admin.auth.admin.getUserById(String(corpo.id || ""));
+    if (e1 || !alvo?.user?.email) return resposta(400, { erro: "Pessoa não encontrada." });
+    const site = String(corpo.site || "").startsWith("http") ? corpo.site : undefined;
+    const g = await admin.auth.admin.generateLink({ type: "recovery", email: alvo.user.email, options: { redirectTo: site } });
+    if (g.error) return resposta(400, { erro: g.error.message });
+    return resposta(200, { ok: true, link: g.data.properties.action_link });
+  }
+
   if (corpo.acao === "remover") {
     const id = String(corpo.id || "");
     if (id === quem.user.id) return resposta(400, { erro: "Você não pode remover o seu próprio acesso." });

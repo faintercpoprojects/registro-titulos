@@ -389,10 +389,10 @@
     }
   }
 
-  function mostrarLink(email, link, depois) {
+  function mostrarLink(email, link, depois, titulo = "Link de acesso", motivo = "O limite de e-mails grátis por hora foi atingido, então o convite não foi por e-mail.") {
     janela(
-      `<h2>Link de acesso</h2>
-       <p>O limite de e-mails grátis por hora foi atingido, então o convite não foi por e-mail.
+      `<h2>${esc(titulo)}</h2>
+       <p>${esc(motivo)}
        Copie o link abaixo e envie para <b>${esc(email)}</b> (WhatsApp, por exemplo). Ao abrir, a pessoa cria a própria senha.</p>
        <textarea readonly rows="4" id="linkConvite">${esc(link)}</textarea>
        <p class="muted">O link vale por pouco tempo (normalmente 1 hora) e só pode ser usado uma vez. Se expirar, convide de novo.</p>
@@ -441,7 +441,9 @@
           .map(
             (p) => `<tr><td>${esc(p.nome)}</td><td>${esc(p.email)}</td><td>
               <select data-perfil="${p.id}" ${p.id === usuario.id ? "disabled title='Você não pode mudar a sua própria permissão'" : ""}>${opcoes(p.papel)}</select></td>
-              <td>${p.id === usuario.id ? "" : `<button class="link perigo" data-remover="${p.id}" data-nome="${esc(p.nome)}">Remover acesso</button>`}</td></tr>`
+              <td class="acoes-pessoa"><button class="link" data-senha="${p.id}" data-email="${esc(p.email)}">Link de nova senha</button>${
+                p.id === usuario.id ? "" : `<button class="link perigo" data-remover="${p.id}" data-nome="${esc(p.nome)}">Remover acesso</button>`
+              }</td></tr>`
           )
           .join("")}</tbody>
       </table></div>`;
@@ -464,6 +466,15 @@
       mostrarErro(erro, `Convite enviado para ${f.email.value.trim()}. A pessoa recebe um e-mail para criar a senha.`, true);
       setTimeout(() => desenharEquipe(el), 1800);
     };
+    el.querySelectorAll("[data-senha]").forEach((b) =>
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        const r = await chamarEquipe({ acao: "senha", id: b.dataset.senha, site: location.origin + location.pathname });
+        b.disabled = false;
+        if (r.erro) return alert(r.erro);
+        mostrarLink(b.dataset.email, r.link, () => {}, "Link de nova senha", "A senha atual continua valendo até a pessoa criar a nova.");
+      })
+    );
     el.querySelectorAll("[data-remover]").forEach((b) =>
       b.addEventListener("click", async () => {
         if (!confirm(`Remover o acesso de ${b.dataset.nome}? Os registros que essa pessoa criou continuam no site.`)) return;

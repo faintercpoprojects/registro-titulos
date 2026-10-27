@@ -359,3 +359,4 @@ table.equipe td:first-child { position: static; }
 .convidar .muted { margin: 10px 0 0; }
 .convidar .erro { margin-top: 10px; }
 @media (max-width: 760px) { .convidar .campos { grid-template-columns: 1fr; } }
+.acoes-pessoa { white-space: nowrap; }
