@@ -22,7 +22,22 @@
   // Links de convite e de nova senha chegam com "#access_token=...&type=invite|recovery".
   // A biblioteca do Supabase apaga isso do endereço ao iniciar, então guardamos antes de criar o cliente.
   const tipoLink = /[#&]type=(invite|recovery|signup|magiclink)/.exec(location.hash)?.[1] || null;
-  const sb = configurado ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+  // Cadeado da sessão com tempo limite: se outra aba travar segurando o cadeado, esta não fica em branco para sempre.
+  async function cadeado(nome, _tempo, fn) {
+    if (!navigator.locks?.request) return fn();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      return await navigator.locks.request(nome, { signal: ctrl.signal }, async () => {
+        clearTimeout(timer);
+        return fn();
+      });
+    } catch (e) {
+      if (e?.name === "AbortError") return fn();
+      throw e;
+    }
+  }
+  const sb = configurado ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { lock: cadeado } }) : null;
   let usuario = null; // { id, email, nome, papel }
   let contagens = {}; // pais -> nº de registros
   const ouvintes = [];
@@ -64,12 +79,16 @@
     } else if (tipoLink && usuario) {
       definirSenha(tipoLink === "recovery" ? "Crie uma nova senha" : "Bem-vindo! Crie sua senha", true);
     }
-    sb.auth.onAuthStateChange(async (evento, session) => {
+    // Nada de chamar o Supabase direto aqui dentro: ele ainda segura o cadeado da sessão e o site trava
+    // (era o que acontecia ao salvar a senha). O setTimeout roda depois que o cadeado é liberado.
+    sb.auth.onAuthStateChange((evento, session) => {
       if (!["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED"].includes(evento)) return;
-      await carregarUsuario(session);
-      await carregarContagens();
-      desenharConta();
-      avisar();
+      setTimeout(async () => {
+        await carregarUsuario(session);
+        await carregarContagens();
+        desenharConta();
+        avisar();
+      }, 0);
     });
     desenharConta();
   }
@@ -682,10 +701,16 @@
     );
     el.querySelectorAll("select[data-perfil]").forEach((s) =>
       s.addEventListener("change", async () => {
+        const anterior = perfis.find((p) => p.id === s.dataset.perfil)?.papel;
         s.disabled = true;
-        const { error: e } = await sb.from("perfis").update({ papel: s.value }).eq("id", s.dataset.perfil);
+        const { data: mudou, error: e } = await sb.from("perfis").update({ papel: s.value }).eq("id", s.dataset.perfil).select("papel");
         s.disabled = false;
-        if (e) alert("Não consegui mudar: " + e.message);
+        if (e || !mudou?.length) {
+          s.value = anterior;
+          return alert("Não consegui mudar a permissão" + (e ? ": " + e.message : ". Entre de novo como administrador e tente outra vez."));
+        }
+        const p = perfis.find((x) => x.id === s.dataset.perfil);
+        if (p) p.papel = s.value;
       })
     );
   }
