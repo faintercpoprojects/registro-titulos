@@ -77,6 +77,24 @@ Deno.serve(async (req) => {
     return resposta(200, { ok: true, link });
   }
 
+  if (corpo.acao === "criar") {
+    // O administrador cria o acesso na hora, já com senha (sem e-mail nem link).
+    const email = String(corpo.email || "").trim().toLowerCase();
+    const nome = String(corpo.nome || "").trim().slice(0, 120);
+    const papel = PAPEIS.includes(corpo.papel) ? corpo.papel : "leitor";
+    const senha = String(corpo.senha || "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return resposta(400, { erro: "E-mail inválido." });
+    if (senha.length < 8) return resposta(400, { erro: "A senha precisa ter pelo menos 8 caracteres." });
+    const { data, error } = await admin.auth.admin.createUser({ email, password: senha, email_confirm: true, user_metadata: { nome } });
+    if (error) {
+      if (/already|registered|exists/i.test(error.message))
+        return resposta(400, { erro: "Esse e-mail já está na lista abaixo. Use \"Definir senha\" e mude a permissão por lá." });
+      return resposta(400, { erro: error.message });
+    }
+    await admin.from("perfis").upsert({ id: data.user.id, email, nome: nome || email.split("@")[0], papel });
+    return resposta(200, { ok: true });
+  }
+
   if (corpo.acao === "senha") {
     // Link para a pessoa criar uma senha nova, sem depender de e-mail (o administrador manda por WhatsApp).
     const { data: alvo, error: e1 } = await admin.auth.admin.getUserById(String(corpo.id || ""));

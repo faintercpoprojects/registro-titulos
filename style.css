@@ -352,7 +352,7 @@ table.equipe td:first-child { position: static; }
 /* ---------- convidar pessoa ---------- */
 .convidar { margin-bottom: 18px; padding: 20px 22px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); }
 .convidar h2 { margin: 0 0 12px; font-size: 17px; color: var(--navy); }
-.convidar .campos { display: grid; grid-template-columns: 1fr 1.2fr 0.8fr auto; gap: 12px; align-items: end; }
+.convidar .campos { display: grid; grid-template-columns: 1fr 1.2fr 0.9fr 0.8fr auto; gap: 12px; align-items: end; }
 .convidar label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
 .convidar input, .convidar select { font: 400 15px "Inter", sans-serif; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); width: 100%; }
 .convidar .btn { padding: 11px 16px; }

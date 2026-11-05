@@ -636,14 +636,16 @@
       ["leitor", "academico", "admin"].map((k) => `<option value="${k}" ${atual === k ? "selected" : ""}>${PAPEIS[k]}</option>`).join("");
     el.innerHTML = `
       <form class="convidar" id="fConvite">
-        <h2>Convidar pessoa</h2>
+        <h2>Adicionar pessoa</h2>
         <div class="campos">
           <label>Nome<input name="nome" required maxlength="120" placeholder="Ex.: Maria Souza"></label>
           <label>E-mail<input name="email" type="email" required placeholder="nome@exemplo.com"></label>
+          <label>Senha<input name="senha" type="text" minlength="8" autocomplete="off" spellcheck="false" placeholder="Vazio = convite por e-mail"></label>
           <label>Permissão<select name="papel">${opcoes("leitor")}</select></label>
-          <button class="btn">Enviar convite</button>
+          <button class="btn" id="btnAdicionar">Enviar convite</button>
         </div>
         <p class="muted" id="descPapel">${PAPEIS_DESC.leitor}</p>
+        <p class="muted">Com senha, o acesso é criado na hora: passe o e-mail e a senha para a pessoa (mínimo de 8 caracteres). Sem senha, ela recebe um convite por e-mail para criar a própria.</p>
         <p class="erro" hidden></p>
       </form>
       <div class="tabela-wrap"><table class="equipe">
@@ -662,9 +664,19 @@
     const f = el.querySelector("#fConvite");
     const erro = f.querySelector(".erro");
     f.papel.addEventListener("change", () => (el.querySelector("#descPapel").textContent = PAPEIS_DESC[f.papel.value]));
+    f.senha.addEventListener("input", () => (el.querySelector("#btnAdicionar").textContent = f.senha.value ? "Criar acesso" : "Enviar convite"));
     f.onsubmit = async (e) => {
       e.preventDefault();
       erro.hidden = true;
+      if (f.senha.value) {
+        ocupado(f, true);
+        const r = await chamarEquipe({ acao: "criar", nome: f.nome.value.trim(), email: f.email.value.trim(), papel: f.papel.value, senha: f.senha.value });
+        ocupado(f, false);
+        if (r.erro) return mostrarErro(erro, r.erro);
+        mostrarErro(erro, `Acesso criado para ${f.email.value.trim()} como ${PAPEIS[f.papel.value]}. Já pode entrar com essa senha.`, true);
+        setTimeout(() => desenharEquipe(el), 2500);
+        return;
+      }
       ocupado(f, true);
       const r = await chamarEquipe({ acao: "convidar", nome: f.nome.value.trim(), email: f.email.value.trim(), papel: f.papel.value, site: location.origin + location.pathname });
       ocupado(f, false);
