@@ -12,6 +12,8 @@
   const selo = (status) => `<span class="selo s-${status}"><span class="dot d-${status}"></span>${STATUS[status].nome}</span>`;
   const temDetalhe = (p) => Boolean(p.orgao || p.requisitos);
   const nomeEsp = (sigla) => ESPECIALIDADES.find((e) => e.sigla === sigla)?.nome || sigla;
+  // Textos gerais editados pelo Acadêmico são texto simples: escapa antes de pôr na página.
+  const txt = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
   function marcarMenu(rota) {
     document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("ativo", a.dataset.nav === rota));
@@ -23,8 +25,9 @@
     const cont = Object.fromEntries(ORDEM.map((s) => [s, PAISES.filter((p) => p.status === s).length]));
     app.innerHTML = `
       <section class="hero">
-        <h1>Registro de Títulos</h1>
-        <p>Onde e como os títulos de especialização da UniCPO podem ser convalidados fora do Brasil: situação de cada país, órgão responsável, documentos e próximos passos.</p>
+        ${Colab.podeEditar() ? `<button class="btn-editar claro" id="editarGeral">✎ Editar textos</button>` : ""}
+        <h1>${txt(TEXTOS.heroTitulo)}</h1>
+        <p>${txt(TEXTOS.heroTexto)}</p>
         <div class="resumo-status">
           ${ORDEM.map((s) => `<button data-status="${s}" title="${STATUS[s].desc}"><span class="dot d-${s}"></span><b>${cont[s]}</b> ${STATUS[s].nome}</button>`).join("")}
         </div>
@@ -46,6 +49,7 @@
       <p class="contagem" id="contagem"></p>
       <div class="grade" id="grade"></div>`;
 
+    document.getElementById("editarGeral")?.addEventListener("click", () => Colab.editarGeral());
     const fStatus = document.getElementById("fStatus");
     const fEsp = document.getElementById("fEsp");
     fStatus.value = filtro.status;
@@ -113,6 +117,7 @@
           <h1>${p.nome}</h1>
           ${selo(p.status)}
         </div>
+        ${Colab.podeEditar() ? `<button class="btn-editar" id="editarPais">✎ Editar informações</button>` : ""}
       </section>
       <section class="secao">
         <h2>Situação da convalidação</h2>
@@ -125,6 +130,7 @@
       <div class="abas" role="tablist">${abas.map(([k, t]) => `<button role="tab" data-aba="${k}" class="${k === atual ? "ativo" : ""}" aria-selected="${k === atual}">${t}</button>`).join("")}</div>
       <section class="secao aba-conteudo" id="abaConteudo"></section>`;
     mostrarAba(p, atual);
+    document.getElementById("editarPais")?.addEventListener("click", () => Colab.editarPais(p));
 
     // Troca de aba sem recarregar a página nem voltar ao topo.
     document.querySelectorAll(".abas button").forEach((b) =>
@@ -219,7 +225,7 @@
       <div class="perguntar">
         <div class="info">
           <h1>Enviar pergunta</h1>
-          <p>Não encontrou o que precisava? Envie sua dúvida sobre o registro de títulos em qualquer país.</p>
+          <p>${txt(TEXTOS.perguntarTexto)}</p>
           <ul>
             <li>O prazo de resposta pode variar conforme a complexidade da pergunta.</li>
             <li>Em alguns casos é preciso aguardar a resposta de órgãos públicos de outros países.</li>
@@ -250,7 +256,7 @@
   function equipe() {
     marcarMenu("");
     app.innerHTML = `<h1 class="pagina-titulo">Equipe e permissões</h1>
-      <p class="pagina-sub"><b>Administrador</b> faz tudo e cuida da equipe. <b>Acadêmico</b> adiciona, edita e apaga informações e anexos. <b>Visualizador</b> só vê e baixa.
+      <p class="pagina-sub"><b>Administrador</b> faz tudo e cuida da equipe. <b>Acadêmico</b> edita os textos do site (países, requisitos, perguntas) e adiciona, edita e apaga informações e anexos. <b>Visualizador</b> só vê e baixa.
       A pessoa convidada recebe um e-mail para criar a própria senha.</p>
       <div id="equipe"></div>`;
     Colab.desenharEquipe(document.getElementById("equipe"));

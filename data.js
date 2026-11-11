@@ -7,6 +7,14 @@ window.ATUALIZADO_EM = "outubro de 2026";
 window.FORMULARIO =
   "https://docs.google.com/forms/d/e/1FAIpQLSeHtsW9dYD7TY-5iVl4MNxZKJ77RhPQ_BH1HRoiYhiXRF0PDg/viewform?embedded=true";
 
+// Textos gerais. O Acadêmico pode mudar pelo site (botão "Editar textos" na página inicial).
+window.TEXTOS = {
+  heroTitulo: "Registro de Títulos",
+  heroTexto:
+    "Onde e como os títulos de especialização da UniCPO podem ser convalidados fora do Brasil: situação de cada país, órgão responsável, documentos e próximos passos.",
+  perguntarTexto: "Não encontrou o que precisava? Envie sua dúvida sobre o registro de títulos em qualquer país.",
+};
+
 window.ESPECIALIDADES = [
   { sigla: "IMPL", nome: "Implantodontia" },
   { sigla: "PERIO", nome: "Periodontia" },

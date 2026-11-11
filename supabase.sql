@@ -174,3 +174,41 @@ update public.registros set categoria = 'titulo_convalidado' where titulo ~* 'co
 -- Data que está no documento do aluno (convalidação). O Painel conta os alunos por mês por esta data.
 alter table public.registros add column if not exists data_documento date;
 create index if not exists registros_data_documento on public.registros (data_documento);
+
+-- ---------- textos editáveis do site (11/11/2026) ----------
+-- O Acadêmico (e o admin) muda pelo site os textos de cada país e os textos gerais.
+-- O original continua no data.js; o que estiver aqui é aplicado por cima. Todo visitante lê; só quem edita grava.
+create table if not exists public.conteudo (
+  chave text primary key check (chave = 'geral' or chave ~ '^pais:[a-z0-9-]+$'),
+  valor jsonb not null default '{}'::jsonb,
+  autor_id uuid references auth.users (id) on delete set null default auth.uid(),
+  autor_nome text not null default '',
+  atualizado_em timestamptz not null default now()
+);
+alter table public.conteudo enable row level security;
+
+drop policy if exists "conteudo: ver" on public.conteudo;
+create policy "conteudo: ver" on public.conteudo for select to anon, authenticated using (true);
+drop policy if exists "conteudo: criar" on public.conteudo;
+create policy "conteudo: criar" on public.conteudo for insert to authenticated with check (public.pode_editar());
+drop policy if exists "conteudo: editar" on public.conteudo;
+create policy "conteudo: editar" on public.conteudo for update to authenticated
+  using (public.pode_editar()) with check (public.pode_editar());
+drop policy if exists "conteudo: apagar" on public.conteudo;
+create policy "conteudo: apagar" on public.conteudo for delete to authenticated using (public.pode_editar());
+
+-- Quem editou e quando: sempre vem de quem está logado.
+create or replace function public.carimba_conteudo()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  new.autor_id := auth.uid();
+  new.autor_nome := coalesce((select nome from public.perfis where id = auth.uid()), '');
+  new.atualizado_em := now();
+  return new;
+end $$;
+drop trigger if exists carimbo_conteudo on public.conteudo;
+create trigger carimbo_conteudo before insert or update on public.conteudo
+  for each row execute function public.carimba_conteudo();
+
+grant select on public.conteudo to anon, authenticated;
+grant insert, update, delete on public.conteudo to authenticated;

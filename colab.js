@@ -13,8 +13,8 @@
   };
   const PAPEIS = { leitor: "Visualizador", academico: "Acadêmico", admin: "Administrador" };
   const PAPEIS_DESC = {
-    admin: "Vê, adiciona, edita e apaga; convida e remove pessoas",
-    academico: "Vê, adiciona, edita e apaga informações e anexos",
+    admin: "Tudo do Acadêmico; convida e remove pessoas",
+    academico: "Edita os textos do site e adiciona, edita e apaga informações e anexos",
     leitor: "Só vê e baixa",
   };
 
@@ -72,7 +72,7 @@
     const erroLink = /error_description=([^&]+)/.exec(location.hash)?.[1];
     const { data: s } = await sb.auth.getSession();
     await carregarUsuario(s.session);
-    await carregarContagens();
+    await Promise.all([carregarContagens(), carregarConteudo()]);
     if (/access_token|error_description/.test(location.hash)) history.replaceState(null, "", location.pathname + "#/");
     if (erroLink) {
       alert("Esse link não vale mais (expirou ou já foi usado). Peça um link novo ao administrador.");
@@ -950,7 +950,310 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // ---------- textos do site editáveis (Acadêmico e admin) ----------
+  // O conteúdo original fica no data.js; o que o Acadêmico muda vai para a tabela "conteudo" e é aplicado por cima.
+  // Chaves: "pais:<id>" (tudo de um país) e "geral" (textos de abertura e data de atualização).
+  const ORIGINAL = { paises: JSON.parse(JSON.stringify(window.PAISES || [])), textos: { ...(window.TEXTOS || {}) }, atualizado: window.ATUALIZADO_EM };
+  const edicoes = {}; // chave -> { atualizado_em, autor_nome }
+
+  // Só deixa passar formatação simples (negrito, listas, títulos, links). Nada de script.
+  const TAGS_OK = new Set(["P", "B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "H4", "BR", "A"]);
+  const TAGS_FORA = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "TEMPLATE", "SVG", "MATH"]);
+  function limparHtml(html) {
+    const doc = new DOMParser().parseFromString(`<div>${html || ""}</div>`, "text/html");
+    const raiz = doc.body.firstElementChild;
+    (function limpar(no) {
+      for (const f of [...no.childNodes]) {
+        if (f.nodeType === 3) continue;
+        if (f.nodeType !== 1 || TAGS_FORA.has(f.tagName)) {
+          f.remove();
+          continue;
+        }
+        limpar(f);
+        if (!TAGS_OK.has(f.tagName)) {
+          // DIV/SPAN do editor viram parágrafo ou somem, mantendo o texto.
+          if (f.tagName === "DIV") {
+            const p = doc.createElement("p");
+            p.append(...f.childNodes);
+            f.replaceWith(p);
+          } else f.replaceWith(...f.childNodes);
+          continue;
+        }
+        for (const at of [...f.attributes]) if (!(f.tagName === "A" && at.name === "href")) f.removeAttribute(at.name);
+        if (f.tagName === "A") {
+          const href = (f.getAttribute("href") || "").trim();
+          if (!/^(https?:|mailto:|#\/)/i.test(href)) f.removeAttribute("href");
+          else if (/^https?:/i.test(href)) f.setAttribute("target", "_blank"), f.setAttribute("rel", "noopener");
+        }
+      }
+    })(raiz);
+    return raiz.innerHTML.replace(/<p>(\s|<br>)*<\/p>/g, "").trim();
+  }
+  const textoPuro = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+  // Texto que já está como HTML (data.js) volta a ser texto normal para ir numa caixa de texto.
+  const decod = (s) => new DOMParser().parseFromString(String(s ?? ""), "text/html").body.textContent;
+  const itensDeLista = (html) => {
+    const doc = new DOMParser().parseFromString(`<div>${limparHtml(html)}</div>`, "text/html");
+    const lis = [...doc.querySelectorAll("li")].map((li) => li.innerHTML.trim());
+    const itens = lis.length ? lis : [...doc.body.firstElementChild.childNodes].map((n) => (n.outerHTML ?? n.textContent).replace(/^<p>|<\/p>$/g, "").trim());
+    return itens.filter((t) => t && t !== "<br>");
+  };
+
+  function aplicarPais(p, valor) {
+    const o = ORIGINAL.paises.find((x) => x.id === p.id) || {};
+    for (const k of Object.keys(p)) if (!["id", "bandeira"].includes(k)) delete p[k];
+    Object.assign(p, JSON.parse(JSON.stringify(o)), valor || {}, { id: p.id, bandeira: o.bandeira || p.bandeira });
+  }
+  function aplicarGeral(valor) {
+    window.TEXTOS = { ...ORIGINAL.textos, ...(valor?.textos || {}) };
+    window.ATUALIZADO_EM = valor?.atualizadoEm || ORIGINAL.atualizado;
+    const el = document.getElementById("atualizado");
+    if (el) el.textContent = window.ATUALIZADO_EM;
+  }
+
+  async function carregarConteudo() {
+    if (!sb) return;
+    const { data: linhas, error } = await sb.from("conteudo").select("chave, valor, atualizado_em, autor_nome");
+    if (error) return console.warn("Textos editados não carregados:", error.message); // tabela ainda não criada: fica o data.js
+    for (const l of linhas || []) {
+      edicoes[l.chave] = l;
+      if (l.chave === "geral") aplicarGeral(l.valor);
+      else if (l.chave.startsWith("pais:")) {
+        const p = window.PAISES.find((x) => x.id === l.chave.slice(5));
+        if (p) aplicarPais(p, limparValorPais(l.valor));
+      }
+    }
+  }
+
+  // Tudo que vem do banco passa pela limpeza antes de ir para a página.
+  function limparValorPais(v) {
+    if (!v || typeof v !== "object") return {};
+    const r = {};
+    if (STATUS_VALIDOS().includes(v.status)) r.status = v.status;
+    if (typeof v.resumo === "string") r.resumo = esc(textoPuro(v.resumo));
+    if (Array.isArray(v.convalidacao)) r.convalidacao = v.convalidacao.map(limparHtml).filter(Boolean);
+    if (v.esp && typeof v.esp === "object")
+      r.esp = Object.fromEntries((window.ESPECIALIDADES || []).map((e) => [e.sigla, ["sim", "cond", "nao", "aguarda"].includes(v.esp[e.sigla]) ? v.esp[e.sigla] : "aguarda"]));
+    if ("orgao" in v) r.orgao = v.orgao && (v.orgao.nome || v.orgao.html) ? { nome: esc(textoPuro(v.orgao.nome)), html: limparHtml(v.orgao.html) } : null;
+    if ("requisitos" in v) r.requisitos = limparHtml(v.requisitos) || null;
+    if (Array.isArray(v.questionamentos))
+      r.questionamentos = v.questionamentos.map((q) => ({ p: esc(textoPuro(q?.p)), r: limparHtml(q?.r) })).filter((q) => q.p);
+    if (Array.isArray(v.acoes)) r.acoes = v.acoes.map(limparHtml).filter(Boolean);
+    return r;
+  }
+  const STATUS_VALIDOS = () => Object.keys(window.STATUS || {});
+
+  // Caixa de texto com formatação simples (negrito, listas, título, link).
+  const editorRico = (campo, html, alto = false) => `
+    <div class="editor-rico">
+      <div class="barra" role="toolbar">
+        <button type="button" data-cmd="bold" title="Negrito"><b>N</b></button>
+        <button type="button" data-cmd="italic" title="Itálico"><i>I</i></button>
+        <button type="button" data-cmd="insertUnorderedList" title="Lista com marcadores">• Lista</button>
+        <button type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
+        <button type="button" data-cmd="titulo" title="Subtítulo">Subtítulo</button>
+        <button type="button" data-cmd="link" title="Link">Link</button>
+        <button type="button" data-cmd="removeFormat" title="Tirar formatação">Limpar</button>
+      </div>
+      <div class="area${alto ? " alta" : ""}" contenteditable="true" data-campo="${campo}">${html || ""}</div>
+    </div>`;
+  function ligarEditores(raiz) {
+    raiz.querySelectorAll(".editor-rico").forEach((ed) => {
+      if (ed.dataset.ligado) return;
+      ed.dataset.ligado = "1";
+      const area = ed.querySelector(".area");
+      area.addEventListener("paste", (e) => {
+        // Colar vem sem a formatação de Word/sites (só o texto).
+        e.preventDefault();
+        document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+      });
+      ed.querySelectorAll("[data-cmd]").forEach((b) =>
+        b.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          area.focus();
+          const cmd = b.dataset.cmd;
+          if (cmd === "titulo") {
+            const bloco = document.queryCommandValue("formatBlock").toLowerCase();
+            document.execCommand("formatBlock", false, bloco === "h4" ? "p" : "h4");
+          } else if (cmd === "link") {
+            const url = prompt("Endereço do link (começando com https://):", "https://");
+            if (url && /^https?:\/\/\S+$/i.test(url.trim())) document.execCommand("createLink", false, url.trim());
+          } else document.execCommand(cmd);
+        })
+      );
+    });
+  }
+  const valorRico = (raiz, campo) => limparHtml(raiz.querySelector(`[data-campo="${campo}"]`)?.innerHTML || "");
+  const listaHtml = (itens) => (itens?.length ? `<ul>${itens.map((t) => `<li>${t}</li>`).join("")}</ul>` : "");
+  const listaNumHtml = (itens) => (itens?.length ? `<ol>${itens.map((t) => `<li>${t}</li>`).join("")}</ol>` : "");
+
+  function rodapeEdicao(chave) {
+    const e = edicoes[chave];
+    return e ? `<p class="muted">Última edição: ${data(e.atualizado_em)}${e.autor_nome ? ` por ${esc(e.autor_nome)}` : ""}.</p>` : "";
+  }
+
+  async function salvarConteudo(chave, valor) {
+    const { data: linha, error } = await sb
+      .from("conteudo")
+      .upsert({ chave, valor }, { onConflict: "chave" })
+      .select("chave, valor, atualizado_em, autor_nome")
+      .maybeSingle();
+    if (error) {
+      if (/relation .*conteudo|does not exist|schema cache/i.test(error.message))
+        return "A tabela de textos ainda não foi criada no Supabase. Peça ao administrador para rodar o trecho \"textos editáveis\" do supabase.sql.";
+      if (/row-level security|permission/i.test(error.message)) return "Sua permissão não deixa editar textos. Só Acadêmico e Administrador editam.";
+      return error.message;
+    }
+    if (!linha) return "O banco não confirmou a gravação. Entre de novo e tente outra vez.";
+    edicoes[chave] = linha;
+    return null;
+  }
+
+  function editarPais(p) {
+    if (!podeEditar()) return;
+    const q = (p.questionamentos || []).map((x) => ({ ...x }));
+    const blocoPergunta = (x, i) => `
+      <div class="q-edit" data-i="${i}">
+        <label>Pergunta<input name="qp" maxlength="300" value="${esc(textoPuro(decod(x.p)))}"></label>
+        <div class="rotulo">Resposta</div>${editorRico("qr" + i, x.r)}
+        <button type="button" class="link perigo" data-tirar-q>Tirar esta pergunta</button>
+      </div>`;
+    janela(
+      `<h2>Editar ${esc(p.nome)}</h2>
+       <p class="muted">O que você mudar aqui aparece para todos que abrem o site. Use os botões da barra para negrito, listas e links.</p>
+       <form class="form-conteudo">
+         <div class="duas">
+           <label>Situação geral<select name="status">${STATUS_VALIDOS().map((s) => `<option value="${s}" ${p.status === s ? "selected" : ""}>${esc(window.STATUS[s].nome)}</option>`).join("")}</select></label>
+         </div>
+         <label>Resumo (aparece no cartão do país)<textarea name="resumo" rows="2" maxlength="400">${esc(decod(p.resumo))}</textarea></label>
+         <div class="rotulo">Situação da convalidação (um item por linha da lista)</div>
+         ${editorRico("convalidacao", listaHtml(p.convalidacao))}
+         <fieldset class="esp-edit"><legend>Situação por especialidade</legend>
+           ${(window.ESPECIALIDADES || [])
+             .map(
+               (e) => `<label>${esc(e.nome)}<select name="esp_${e.sigla}">${[
+                 ["sim", "Convalida"],
+                 ["cond", "Com condições"],
+                 ["nao", "Não convalida"],
+                 ["aguarda", "Aguardando"],
+               ]
+                 .map(([v, t]) => `<option value="${v}" ${p.esp?.[e.sigla] === v ? "selected" : ""}>${t}</option>`)
+                 .join("")}</select></label>`
+             )
+             .join("")}
+         </fieldset>
+         <label>Órgão responsável (nome)<input name="orgao_nome" maxlength="300" value="${esc(decod(p.orgao?.nome))}" placeholder="Deixe vazio se ainda não souber"></label>
+         <div class="rotulo">Sobre o órgão</div>
+         ${editorRico("orgao_html", p.orgao?.html, true)}
+         <div class="rotulo">Requisitos e documentos</div>
+         ${editorRico("requisitos", p.requisitos, true)}
+         <div class="rotulo">Principais questionamentos</div>
+         <div id="perguntas">${q.map(blocoPergunta).join("")}</div>
+         <button type="button" class="btn-sec" id="maisPergunta">+ Adicionar pergunta</button>
+         <div class="rotulo">Próximas ações (um passo por linha da lista)</div>
+         ${editorRico("acoes", listaNumHtml(p.acoes))}
+         ${rodapeEdicao("pais:" + p.id)}
+         <p class="erro" hidden></p>
+         <div class="acoes-form">
+           ${edicoes["pais:" + p.id] ? `<button type="button" class="link perigo" id="restaurar">Voltar ao texto original</button>` : ""}
+           <button type="button" class="btn-sec" data-fechar>Cancelar</button><button class="btn">Salvar</button>
+         </div>
+       </form>`,
+      (m, fechar) => {
+        m.classList.add("larga");
+        const f = m.querySelector("form");
+        const erro = m.querySelector(".erro");
+        const perguntas = m.querySelector("#perguntas");
+        let n = q.length;
+        ligarEditores(m);
+        const ligarTirar = () =>
+          perguntas.querySelectorAll("[data-tirar-q]").forEach((b) => (b.onclick = () => b.closest(".q-edit").remove()));
+        ligarTirar();
+        m.querySelector("#maisPergunta").onclick = () => {
+          perguntas.insertAdjacentHTML("beforeend", blocoPergunta({ p: "", r: "" }, n++));
+          ligarEditores(perguntas);
+          ligarTirar();
+          perguntas.lastElementChild.querySelector("input").focus();
+        };
+        m.querySelector("#restaurar")?.addEventListener("click", async () => {
+          if (!confirm(`Voltar ${p.nome} ao texto original do site? As edições feitas aqui serão descartadas.`)) return;
+          const { error } = await sb.from("conteudo").delete().eq("chave", "pais:" + p.id);
+          if (error) return mostrarErro(erro, error.message);
+          delete edicoes["pais:" + p.id];
+          aplicarPais(p, null);
+          fechar();
+          avisar();
+        });
+        f.onsubmit = async (e) => {
+          e.preventDefault();
+          erro.hidden = true;
+          const orgaoNome = textoPuro(f.orgao_nome.value);
+          const orgaoHtml = valorRico(m, "orgao_html");
+          const valor = {
+            status: f.status.value,
+            resumo: textoPuro(f.resumo.value),
+            convalidacao: itensDeLista(valorRico(m, "convalidacao")),
+            esp: Object.fromEntries((window.ESPECIALIDADES || []).map((x) => [x.sigla, f["esp_" + x.sigla].value])),
+            orgao: orgaoNome || orgaoHtml ? { nome: orgaoNome, html: orgaoHtml } : null,
+            requisitos: valorRico(m, "requisitos") || null,
+            questionamentos: [...perguntas.querySelectorAll(".q-edit")]
+              .map((b) => ({ p: textoPuro(b.querySelector("input").value), r: limparHtml(b.querySelector(".area").innerHTML) }))
+              .filter((x) => x.p),
+            acoes: itensDeLista(valorRico(m, "acoes")),
+          };
+          if (!valor.resumo) return mostrarErro(erro, "Escreva um resumo para o cartão do país.");
+          if (!valor.convalidacao.length) return mostrarErro(erro, "Escreva pelo menos um item em \"Situação da convalidação\".");
+          ocupado(f, true);
+          const falha = await salvarConteudo("pais:" + p.id, valor);
+          ocupado(f, false);
+          if (falha) return mostrarErro(erro, falha);
+          aplicarPais(p, limparValorPais(valor));
+          fechar();
+          avisar();
+        };
+      },
+      true
+    );
+  }
+
+  function editarGeral() {
+    if (!podeEditar()) return;
+    const t = window.TEXTOS || {};
+    janela(
+      `<h2>Textos gerais do site</h2>
+       <form class="form-conteudo">
+         <label>Título da página inicial<input name="heroTitulo" maxlength="120" required value="${esc(t.heroTitulo)}"></label>
+         <label>Texto de abertura<textarea name="heroTexto" rows="3" maxlength="600" required>${esc(t.heroTexto)}</textarea></label>
+         <label>Texto da página "Enviar pergunta"<textarea name="perguntarTexto" rows="2" maxlength="600">${esc(t.perguntarTexto)}</textarea></label>
+         <label>Atualizado em (aparece no rodapé)<input name="atualizadoEm" maxlength="60" required value="${esc(window.ATUALIZADO_EM)}" placeholder="Ex.: novembro de 2026"></label>
+         ${rodapeEdicao("geral")}
+         <p class="erro" hidden></p>
+         <div class="acoes-form"><button type="button" class="btn-sec" data-fechar>Cancelar</button><button class="btn">Salvar</button></div>
+       </form>`,
+      (m, fechar) => {
+        const f = m.querySelector("form");
+        f.onsubmit = async (e) => {
+          e.preventDefault();
+          const valor = {
+            textos: { heroTitulo: textoPuro(f.heroTitulo.value), heroTexto: textoPuro(f.heroTexto.value), perguntarTexto: textoPuro(f.perguntarTexto.value) },
+            atualizadoEm: textoPuro(f.atualizadoEm.value),
+          };
+          ocupado(f, true);
+          const falha = await salvarConteudo("geral", valor);
+          ocupado(f, false);
+          if (falha) return mostrarErro(m.querySelector(".erro"), falha);
+          aplicarGeral(valor);
+          fechar();
+          avisar();
+        };
+      }
+    );
+  }
+
   window.Colab = {
+    podeEditar,
+    editarPais,
+    editarGeral,
     desenharPainel,
     configurado,
     iniciar,
